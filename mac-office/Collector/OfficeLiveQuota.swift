@@ -151,27 +151,44 @@ struct OfficeLiveQuota: Sendable {
     func displayPayload(_ local: OfficeJSON, now: Date = Date()) -> OfficeJSON {
         var payload = local
         let sameAccount = account.map { $0 == local["quota_account"] as? String } ?? false
+        let localPlan = local["quota_plan"] as? String
+        let compatibleLogs = sameAccount && (plan == nil || localPlan == nil || plan == localPlan)
         if let windows {
             let active = windows.filter { $0.resets.map { $0 > now } ?? true }
-            let localWindows = sameAccount ? local["quota_windows"] as? [OfficeJSON] ?? [] : []
-            let rows = active.map { window -> OfficeJSON in
-                let live = window.payload
-                guard let reset = live["resets_at"] as? String,
-                      let matching = localWindows.first(where: {
-                          $0["window_minutes"] as? Int == window.minutes && $0["resets_at"] as? String == reset
-                      }) else { return live }
-                // Estimates remain paired with their log sample. Only carry them when the percentages also agree.
-                guard matching["remaining_percent"] as? Double == window.remaining else { return live }
-                return matching.merging(live) { _, current in current }
+            let localWindows = compatibleLogs ? local["quota_windows"] as? [OfficeJSON] ?? [] : []
+            let liveDurations = Set(active.map(\.minutes))
+            var rows = active.map { window -> OfficeJSON in
+                var row = window.payload
+                if let matching = localWindows.first(where: { $0["window_minutes"] as? Int == window.minutes }),
+                   let reset = row["resets_at"] as? String, matching["resets_at"] as? String == reset {
+                    row = matching.merging(row) { _, current in current }
+                    // A log-based estimate must stay paired with its percentage sample.
+                    if matching["remaining_percent"] as? Double != window.remaining {
+                        row.removeValue(forKey: "cycle_estimated_tokens")
+                        row.removeValue(forKey: "cycle_comparison")
+                    }
+                }
+                row["source"] = "live"
+                return row
             }
+            let fallback = localWindows.filter { row in
+                guard let minutes = row["window_minutes"] as? Int, !liveDurations.contains(minutes) else { return false }
+                return (officeTimestamp(row["resets_at"]).map { $0 > now }) ?? true
+            }
+            rows += fallback.map { $0.merging(["source": "local"]) { _, current in current } }
+            rows.sort { ($0["window_minutes"] as? Int ?? 0) < ($1["window_minutes"] as? Int ?? 0) }
             payload["quota"] = rows.last as Any? ?? NSNull()
             payload["quota_windows"] = rows
-            payload["quota_closed_windows"] = [] as [OfficeJSON]
-            payload["quota_plan"] = plan as Any? ?? NSNull()
-            payload["quota_sampled_at"] = officeISODate(sampledAt)
-            payload["quota_source"] = "live"
-        } else if sameAccount {
+            if !compatibleLogs { payload["quota_closed_windows"] = [] as [OfficeJSON] }
+            payload["quota_plan"] = (plan ?? (compatibleLogs ? localPlan : nil)) as Any? ?? NSNull()
+            if !active.isEmpty || fallback.isEmpty {
+                payload["quota_sampled_at"] = officeISODate(sampledAt)
+            }
+            payload["quota_source"] = fallback.isEmpty ? "live" : active.isEmpty ? "local_fallback" : "mixed"
+        } else if compatibleLogs {
             payload["quota_source"] = "fallback"
+        } else if account == nil, local["quota_sampled_at"] is String {
+            payload["quota_source"] = "local_fallback"
         } else {
             payload["quota"] = NSNull()
             payload["quota_windows"] = [] as [OfficeJSON]

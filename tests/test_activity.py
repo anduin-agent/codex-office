@@ -116,6 +116,32 @@ class CodexActivityTests(unittest.TestCase):
         self.assertNotIn("private", json.dumps(rows))
         self.assertNotIn("changed.py", json.dumps(rows))
 
+    def test_registered_project_workspaces_are_detected_without_git(self):
+        managed = self.projects / "registered"
+        subfolder = managed / "nested"
+        subfolder.mkdir(parents=True)
+        custom = str(UUID(int=2))
+        unregistered = str(UUID(int=3))
+        self.start(self.owner, subfolder, self.turn)
+        self.start(custom, subfolder, "custom")
+        self.start(unregistered, self.a, "unregistered")
+        self.sidebar((custom, str(subfolder), "Custom chat", 0, 0, "section-a", None))
+        with sqlite3.connect(self.home / "state_5.sqlite") as db:
+            db.executescript("""
+                CREATE TABLE projects (id TEXT, name TEXT, position INT);
+                CREATE TABLE project_roots (project_id TEXT, path TEXT, position INT);
+                INSERT INTO projects VALUES ('managed', 'Managed project', 0);
+            """)
+            db.execute("INSERT INTO project_roots VALUES ('managed', ?, 0)", [str(managed)])
+        snapshot = self.scan(20)
+        self.assertTrue(snapshot["sidebar"]["has_projects"])
+        rows = {row["id"]: row for row in snapshot["threads"]}
+        self.assertTrue(rows[self.owner]["sidebar_project"])
+        self.assertIsNone(rows[self.owner]["section_id"])
+        self.assertEqual(rows[custom]["section_id"], "section-a")
+        self.assertEqual(rows[self.owner]["project_id"], project_id(managed))
+        self.assertFalse(rows[unregistered]["sidebar_project"])
+
     def test_confirmed_wait_keeps_the_root_visible_and_clears_after_reply(self):
         parent = self.start(self.owner, self.a, self.turn)
         child = str(UUID(int=2))

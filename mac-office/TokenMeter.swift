@@ -77,7 +77,8 @@ struct TokenUsageSnapshot {
             case 10_080: language.text("套餐周余量", "Weekly quota remaining")
             default: language.text("套餐余量", "Plan quota remaining")
             }
-            if payload["quota_source"] as? String == "live" {
+            let source = (payload["quota"] as? [String: Any])?["source"] as? String
+            if (source ?? payload["quota_source"] as? String) == "live" {
                 return language.text("\(label)：\(quotaText)（实时账户额度）", "\(label) · \(quotaText) (live account quota)")
             }
             return language.text("\(label)：\(quotaText)（本机最近记录）", "\(label) · \(quotaText) (last local record)")

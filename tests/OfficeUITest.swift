@@ -86,6 +86,8 @@ enum OfficeUITest {
                 try await checkProjectAliases(office, panel, view, workspace: workspace, settings: settings)
                 try await checkSettings(office, panel, view, settings)
                 try await checkDetailedUsage(office, panel, view)
+                try await checkOfficeSections(office, panel, view)
+                try await checkOfficeZoom(panel, view, settings: settings)
                 office.stopOffscreenPanel()
                 print("Offscreen AppKit glass, toolbar, usage details, and WebKit settings checks passed")
                 exit(EXIT_SUCCESS)
@@ -298,6 +300,371 @@ enum OfficeUITest {
         guard !panel.isVisible, !panel.isKeyWindow, !NSApp.isActive else {
             throw Failure("Toolbar layout verification must stay offscreen")
         }
+    }
+
+    @MainActor
+    private static func checkOfficeSections(_ office: OfficeApplication, _ panel: NSPanel, _ view: WKWebView) async throws {
+        let tallScreen = NSRect(x: 0, y: 0, width: 1440, height: 1000)
+        office.offscreenPanelBounds = tallScreen
+        let regular = OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 2)
+        let three = OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 3)
+        let maximum = OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 4)
+        let shortScreen = NSRect(x: 0, y: 0, width: 1440, height: 640)
+        let short = OfficeChrome.panelFrame(in: shortScreen, anchor: nil, floorCount: 4)
+        guard regular.height < three.height, three.height < maximum.height, regular.maxY == maximum.maxY,
+              OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 20) == maximum,
+              shortScreen.contains(short), short.height < maximum.height else {
+            throw Failure("The panel must grow for three and four floors, with a fixed ceiling and screen bounds")
+        }
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#close-settings').click();
+            document.querySelector('#show-office').click();
+            window.officeSetLanguage('zh-CN');
+            window.officeSetVisible(true);
+            window.sectionSnapshot = {
+                source_status:'ok', collected_at:new Date(Date.now()+1000).toISOString(), visible_sections:null,
+                sidebar:{source_status:'ok',sections:[
+                    {id:'dev',name:'开发'}, {id:'review',name:'审阅'}, {id:'empty',name:'稍后'},
+                    {id:'paused',name:'暂停'}, {id:'ideas',name:'想法'}
+                ]},
+                projects:[{id:'repo',name:'仓库'}], threads:[
+                    {id:'dev-chat',root_id:'dev-chat',title:'开发任务',status:'running',section_id:'dev',project_id:'repo'},
+                    {id:'review-chat',root_id:'review-chat',title:'审阅任务',status:'waiting',section_id:'review',project_id:null},
+                    {id:'unsectioned-chat',root_id:'unsectioned-chat',title:'独立项目',status:'running',section_id:null,project_id:'repo'},
+                    {id:'finished-chat',root_id:'finished-chat',title:'已完成任务',status:'completed',section_id:'empty',project_id:'repo'}
+                ]
+            };
+            window.officeSetSnapshot(window.sectionSnapshot, null, {});
+            """)
+        try await expect("All selected sections have their own stacked floor, including an idle section", panel, view, """
+            (() => {
+                const floors = [...document.querySelectorAll('.floor-marker')];
+                const positions = floors.map(floor=>parseFloat(floor.style.top));
+                const scene = document.querySelector('.office-scene');
+                return floors.map(floor=>floor.textContent).join('|')==='审阅|开发|未分区|稍后|暂停|想法' &&
+                    positions.every((top,i)=>i===0 || top>positions[i-1]+50) &&
+                    scene.scrollHeight>scene.clientHeight &&
+                    document.querySelector('#office-sections [aria-pressed=true]').textContent==='全部' &&
+                    document.querySelectorAll('.chat-marker[data-thread-id]').length===3 &&
+                    document.querySelector('[data-thread-id=dev-chat][data-floor=dev][data-status=running]') &&
+                    document.querySelector('[data-thread-id=review-chat][data-floor=review][data-status=waiting]') &&
+                    document.querySelector('[data-thread-id=unsectioned-chat][data-floor=unsectioned]') &&
+                    document.querySelectorAll('.idle-floor[data-floor=empty] i').length===3 &&
+                    !document.querySelector('.idle-floor[data-floor=dev]');
+            })()
+            """)
+        guard panel.frame == maximum else { throw Failure("The native panel did not grow to the four-floor height") }
+        _ = try await view.evaluateJavaScript("document.querySelector('#office-sections button[title=想法]').click()")
+        let floorNavigation = """
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const bounds = scene.getBoundingClientRect();
+                const label = document.querySelector('.floor-marker[data-floor=ideas]');
+                const floor = label.getBoundingClientRect();
+                const canvas = document.querySelector('.stage canvas:not([hidden])').getBoundingClientRect();
+                return {scroll:scene.scrollTop,top:floor.top-bounds.top,bottom:bounds.bottom-floor.bottom,
+                    canvasOffset:canvas.top-bounds.top,heightMatch:canvas.height===scene.clientHeight,
+                    located:label.dataset.located,highlight:!document.querySelector('.floor-focus').hidden,
+                    count:document.querySelectorAll('.floor-marker').length};
+            })()
+            """
+        do {
+            try await expect("Floor navigation scrolls the tower with the canvas pinned to the viewport", panel, view, """
+                (v => v.scroll>0 && v.top>=0 && v.bottom>=0 && Math.abs(v.canvasOffset)<1 && v.heightMatch &&
+                    v.located==='true' && v.highlight && v.count===6)(\(floorNavigation))
+                """)
+        } catch {
+            let state = try await view.evaluateJavaScript(floorNavigation)
+            throw Failure("\(error) \(String(describing: state))")
+        }
+        try await expect("An empty section has a rendered platform below its floor label", panel, view, """
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const empty = document.querySelector('.idle-floor[data-floor=empty]');
+                const bounds = scene.getBoundingClientRect();
+                const current = empty.getBoundingClientRect();
+                scene.scrollTop += current.top-bounds.top-bounds.height/2;
+                const glCanvas = document.querySelector('#webgl');
+                if (!glCanvas.hidden) glCanvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));
+                scene.dispatchEvent(new Event('scroll'));
+                const canvas = document.querySelector('#fallback');
+                const label = empty.getBoundingClientRect();
+                const ratio = canvas.width/bounds.width;
+                const x = Math.round((label.left+label.width/2-bounds.left)*ratio);
+                const y = Math.round((label.top+label.height/2-bounds.top+16)*ratio);
+                return canvas.getContext('2d').getImageData(x,y,1,1).data[3] === 255;
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("document.querySelector('[data-thread-id=unsectioned-chat]').click()")
+        try await expect("An unsectioned chat can belong to a project", panel, view,
+                         "document.querySelector('#detail').textContent.includes('未分区 · 仓库')")
+        _ = try await view.evaluateJavaScript("window.officeLocateWaiting()")
+        try await expect("Waiting navigation finds a chat without a project in its actual section", panel, view, """
+            document.querySelector('#detail').textContent.includes('审阅 · 无项目') &&
+            document.querySelector('[data-thread-id=review-chat]').getBoundingClientRect().top >=
+                document.querySelector('.office-scene').getBoundingClientRect().top
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.sectionSnapshot,threads:window.sectionSnapshot.threads.map(thread =>
+                thread.id==='finished-chat' ? {...thread,status:'waiting',
+                    last_activity:window.sectionSnapshot.collected_at} : thread
+            )}, null, {});
+            """)
+        try await expect("New activity promotes a previously idle floor above other occupied floors", panel, view, """
+            document.querySelector('.floor-marker').dataset.floor==='empty' &&
+            document.querySelector('[data-thread-id=finished-chat][data-floor=empty][data-status=waiting]') !== null
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:['dev','review','empty','paused']}, null, {});
+            """)
+        try await expect("Four full-size floors keep their spacing and scroll at the maximum panel height", panel, view, """
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const floors = [...document.querySelectorAll('.floor-marker')];
+                if (floors.length!==4 || scene.scrollHeight<=scene.clientHeight) return false;
+                window.officeFloorSpacing = parseFloat(floors[1].style.top)-parseFloat(floors[0].style.top);
+                return true;
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:['dev','review','empty']}, null, {});
+            """)
+        for _ in 0..<40 {
+            if panel.frame == three { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard panel.frame == three else { throw Failure("The native panel did not shrink to the three-floor height") }
+        try await expect("Three full-size floors fit at their native height", panel, view, """
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const floors = [...document.querySelectorAll('.floor-marker')];
+                return floors.length===3 && scene.scrollHeight===scene.clientHeight &&
+                    Math.abs(parseFloat(floors[1].style.top)-parseFloat(floors[0].style.top)-window.officeFloorSpacing)<1;
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("document.querySelector('#office-sections button[title=稍后]').click()")
+        try await expect("Selecting an already visible floor highlights only that floor", panel, view, """
+            document.querySelector('.office-scene').scrollTop===0 &&
+            document.querySelectorAll('.floor-marker[data-located=true]').length===1 &&
+            document.querySelector('.floor-marker[data-floor=empty]').dataset.located==='true' &&
+            document.querySelector('.floor-focus').style.clipPath.startsWith('polygon(')
+            """)
+        _ = try await view.evaluateJavaScript("document.querySelector('#office-sections button[title=全部]').click()")
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#show-usage').click();
+            """)
+        for _ in 0..<40 {
+            if panel.frame == regular { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard panel.frame == regular else { throw Failure("Usage must retain the regular native panel height") }
+        _ = try await view.evaluateJavaScript("document.querySelector('#show-office').click()")
+        for _ in 0..<40 {
+            if panel.frame == three { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard panel.frame == three else { throw Failure("Returning to the office must restore the floor height") }
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:['dev','review']}, null, {});
+            """)
+        try await expect("Extra floors use the same spacing as the standard two-floor view", panel, view, """
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const floors = [...document.querySelectorAll('.floor-marker')];
+                return floors.length===2 && scene.scrollHeight===scene.clientHeight &&
+                    Math.abs(parseFloat(floors[1].style.top)-parseFloat(floors[0].style.top)-window.officeFloorSpacing)<1;
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:['dev']}, null, {})")
+        try await expect("Saved visibility removes excluded floors and resets their navigation", panel, view, """
+            [...document.querySelectorAll('#office-sections button')].map(button=>button.textContent).join('|')==='全部|开发' &&
+            document.querySelector('#office-sections [aria-pressed=true]').textContent==='全部' &&
+            [...document.querySelectorAll('.floor-marker')].map(floor=>floor.textContent).join('|')==='开发' &&
+            document.querySelectorAll('.chat-marker[data-thread-id]').length===1 &&
+            document.querySelector('.chat-marker[data-thread-id]').dataset.threadId==='dev-chat'
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetLanguage('en');
+            window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:['empty']}, null, {});
+            """)
+        try await expect("An empty floor shows ambient motion without adding a chat label", panel, view, """
+            (() => {
+                const idle = document.querySelector('.idle-floor[data-floor=empty]');
+                const dot = idle.firstElementChild;
+                const bounds = idle.getBoundingClientRect();
+                const point = dot.getBoundingClientRect();
+                return document.querySelector('.floor-marker').textContent==='稍后' &&
+                    idle.dataset.inView==='true' && idle.textContent==='' &&
+                    point.width>4 && point.left>=bounds.left && point.right<=bounds.right &&
+                    point.top>=bounds.top && point.bottom<=bounds.bottom &&
+                    !document.querySelector('.chat-marker[data-thread-id]');
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetLanguage('zh-CN');
+            window.officeSetSnapshot({...window.sectionSnapshot,threads:[...window.sectionSnapshot.threads,
+                ...Array.from({length:6},(_,i)=>({id:'extra-'+i,title:'额外工位 '+i,status:'running',section_id:'dev'}))
+            ]}, null, {});
+            document.querySelector('.floor-page-marker button:last-child').click();
+            """)
+        try await expect("Paging desks on one floor leaves the other floors occupied", panel, view, """
+            document.querySelector('.floor-page-marker').textContent.includes('2/2') &&
+            document.querySelectorAll('.chat-marker[data-floor=dev]').length===3 &&
+            document.querySelector('[data-thread-id=review-chat][data-floor=review]') !== null
+            """)
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('.floor-page-marker button:first-child').click();
+            """)
+        try await expect("Four workstations span the floor without clustering on one side", panel, view, """
+            (() => {
+                const stage = document.querySelector('.stage').getBoundingClientRect();
+                const seats = [...document.querySelectorAll('.chat-marker[data-floor=dev]')].map(node=>node.getBoundingClientRect());
+                return seats.length===4 && seats[0].left<stage.left+stage.width*.25 &&
+                    seats.at(-1).right>stage.left+stage.width*.75 &&
+                    seats.every((seat,index)=>index===0 || seat.left>seats[index-1].right);
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.sectionSnapshot,threads:[...window.sectionSnapshot.threads,
+                ...Array.from({length:4},(_,i)=>({id:'dev-agent-'+i,root_id:'dev-chat',parent_id:'dev-chat',status:'running'}))
+            ]}, null, {});
+            """)
+        try await expect("A single team uses open space on both sides before compacting", panel, view, """
+            (() => {
+                const links = [...document.querySelectorAll('.agent-link[data-owner=dev-chat]')];
+                const directions = links.map(link=>new DOMMatrix(getComputedStyle(link).transform).a);
+                return links.length===4 && directions.some(value=>value>0) && directions.some(value=>value<0) &&
+                    !document.querySelector('[data-thread-id=dev-chat] .chat-team');
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:null,
+                sidebar:{source_status:'ok',sections:[]}}, null, {});
+            """)
+        try await expect("An available sidebar with no custom sections uses a single catch-all floor", panel, view, """
+            [...document.querySelectorAll('.floor-marker')].map(floor=>floor.textContent).join('|')==='未分区' &&
+            document.querySelectorAll('.chat-marker[data-floor=unsectioned]').length===3
+            """)
+        _ = try await view.evaluateJavaScript("""
+            const projectSidebar = {...window.sectionSnapshot.sidebar,has_projects:true};
+            window.projectFixture = {...window.sectionSnapshot,sidebar:projectSidebar,threads:[
+                ...window.sectionSnapshot.threads.map(thread=>['dev-chat','unsectioned-chat'].includes(thread.id)
+                    ? {...thread,sidebar_project:true} : thread),
+                {id:'loose',status:'running',title:'独立聊天',section_id:null,project_id:null}
+            ]};
+            window.officeSetSnapshot(window.projectFixture, null, {});
+            window.officeOpenSettings();
+            """)
+        try await expect("The built-in Projects section is independently selectable in settings", panel, view, """
+            (() => {
+                const list = document.querySelector('#visible-section-list');
+                return document.querySelector('#office-settings').open &&
+                    [...list.querySelectorAll('label')].some(label => label.textContent==='项目' && label.querySelector('input[type=checkbox]')) &&
+                    document.querySelector('[data-thread-id=unsectioned-chat][data-floor="system:projects"]') !== null &&
+                    document.querySelector('[data-thread-id=dev-chat][data-floor=dev]') !== null &&
+                    document.querySelector('[data-thread-id=loose][data-floor=unsectioned]') !== null;
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#close-settings').click();
+            window.officeSetSnapshot({...window.projectFixture,visible_sections:['system:projects']}, null, {});
+            """)
+        try await expect("The Projects floor excludes chats in custom sections and unsectioned chats", panel, view, """
+            [...document.querySelectorAll('.floor-marker')].map(floor=>floor.textContent).join('|')==='项目' &&
+            [...document.querySelectorAll('.chat-marker[data-thread-id]')].map(node=>node.dataset.threadId).join('|')==='unsectioned-chat'
+            """)
+    }
+
+    @MainActor
+    private static func checkOfficeZoom(_ panel: NSPanel, _ view: WKWebView, settings: URL) async throws {
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.projectFixture,visible_sections:null,
+                sidebar:{source_status:'ok',has_projects:true,sections:[{id:'dev',name:'开发'}]},
+                threads:window.projectFixture.threads.filter(thread=>['dev-chat','unsectioned-chat'].includes(thread.id))
+            }, null, {});
+            window.zoomSpacing = () => {
+                const [first,second] = document.querySelectorAll('.floor-marker');
+                return parseFloat(second.style.top)-parseFloat(first.style.top);
+            };
+            window.defaultZoomSpacing = window.zoomSpacing();
+            document.querySelector('#office-zoom-in').click();
+            document.querySelector('#office-zoom-in').click();
+            """)
+        try await expect("Zoom changes the floor size while keeping the canvas pinned to the viewport", panel, view, """
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const canvas = document.querySelector('.stage canvas:not([hidden])').getBoundingClientRect();
+                return Math.abs(window.zoomSpacing()/window.defaultZoomSpacing-1.2)<.02 &&
+                    scene.scrollHeight>scene.clientHeight &&
+                    Math.abs(canvas.left-scene.getBoundingClientRect().left)<1 &&
+                    document.querySelector('#office-zoom').textContent.trim()==='';
+            })()
+            """)
+        try await expectSavedZoom(120, settings: settings)
+        _ = try await view.evaluateJavaScript("""
+            for (let i=0; i<4; i++) document.querySelector('#office-zoom-in').click();
+            """)
+        try await expect("Zoom can scroll horizontally when the scene exceeds the panel width", panel, view, """
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const canvas = document.querySelector('.stage canvas:not([hidden])').getBoundingClientRect();
+                return document.querySelector('#office-zoom-in').disabled &&
+                    scene.scrollWidth>scene.clientWidth && scene.scrollLeft>0 &&
+                    Math.abs(canvas.left-scene.getBoundingClientRect().left)<1 &&
+                    Math.abs(window.zoomSpacing()/window.defaultZoomSpacing-1.6)<.03;
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#show-usage').click();
+            window.zoomHiddenInUsage = document.querySelector('#office-zoom').hidden;
+            document.querySelector('#show-office').click();
+            document.querySelector('#office-zoom-reset').click();
+            """)
+        try await expect("Reset returns to the original scale and zoom controls belong to the office view", panel, view, """
+            window.zoomHiddenInUsage &&
+            document.querySelector('#office-zoom-reset').disabled &&
+            Math.abs(window.zoomSpacing()-window.defaultZoomSpacing)<1
+            """)
+        try await expectSavedZoom(100, settings: settings)
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const {left,top,width,height} = scene.getBoundingClientRect();
+                const options = {bubbles:true,cancelable:true,clientX:left+width/2,clientY:top+height/2};
+                window.regularWheelScrolls = scene.dispatchEvent(new WheelEvent('wheel',{...options,deltaY:56}));
+                scene.dispatchEvent(new WheelEvent('wheel',{...options,deltaY:-56,ctrlKey:true}));
+            })()
+            """)
+        try await expect("Modified wheel zooms the scene and ordinary wheel events remain available for scrolling", panel, view, """
+            window.regularWheelScrolls && Math.abs(window.zoomSpacing()/window.defaultZoomSpacing-1.25)<.02
+            """)
+        try await expectSavedZoom(125, settings: settings)
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const scene = document.querySelector('.office-scene');
+                const {left,top,width,height} = scene.getBoundingClientRect();
+                for (const type of ['gesturestart','gesturechange','gestureend']) {
+                    const event = new Event(type,{bubbles:true,cancelable:true});
+                    Object.assign(event,{clientX:left+width/2,clientY:top+height/2,scale:.8});
+                    scene.dispatchEvent(event);
+                }
+            })()
+            """)
+        try await expect("Pinching applies and saves zoom through the same scene controls", panel, view, """
+            document.querySelector('#office-zoom-reset').disabled &&
+            Math.abs(window.zoomSpacing()-window.defaultZoomSpacing)<1
+            """)
+        try await expectSavedZoom(100, settings: settings)
+    }
+
+    @MainActor
+    private static func expectSavedZoom(_ percent: Int, settings: URL) async throws {
+        for _ in 0..<80 {
+            let preferences = try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as? [String: Any]
+            if preferences?["office_zoom"] as? Int == percent { return }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        throw Failure("Zoom did not save \(percent) percent to local settings")
     }
 
     @MainActor
@@ -704,14 +1071,17 @@ enum OfficeUITest {
                 result = {'userAgent': 'fixture'}
             elif method == 'account/read':
                 assert request['params']['refreshToken'] is False
-                result = {'account': {'type': 'chatgpt', 'planType': 'plus'},
-                          'workspaceRouting': {'chatgptAccountId': account}}
+                result = {'account': None} if mode == 'signed-out' else {
+                    'account': {'type': 'chatgpt', 'planType': 'plus'},
+                    'workspaceRouting': {'chatgptAccountId': account}}
             elif method == 'account/rateLimits/read':
-                if mode != 'live':
+                if mode not in ('live', 'mixed'):
                     print(json.dumps({'id':request['id'], 'error':{'code':-32603}}), flush=True)
                     continue
                 limits = {'planType': 'plus', 'primary': {'usedPercent': 70, 'windowDurationMins': 10080,
                           'resetsAt': now + 3600}, 'secondary': {'usedPercent': 16, 'windowDurationMins': 300}}
+                if mode == 'mixed':
+                    limits.pop('primary')
                 result = {'accountId': account, 'rateLimitsByLimitId': {'codex': limits}}
             else:
                 raise AssertionError(method)
@@ -719,21 +1089,36 @@ enum OfficeUITest {
         """#
         try script.write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        try button(.settings, in: panel).performClick(nil)
+        try await expect("Live quota starts enabled", panel, view, """
+            document.querySelector('#office-settings').open && !document.querySelector('[name=live_quota]').matches(':disabled') &&
+            document.querySelector('[name=live_quota]').checked
+            """)
+        try "live".write(to: outcome, atomically: true, encoding: .utf8)
         office.offscreenQuotaExecutable = executable
         await office.refreshOffscreenUsage()
-        guard !FileManager.default.fileExists(atPath: invoked.path) else {
-            throw Failure("Live quota must never start automatically in the default mode")
-        }
-        try button(.settings, in: panel).performClick(nil)
-        try await expect("Live quota starts disabled", panel, view, """
-            document.querySelector('#office-settings').open && !document.querySelector('[name=live_quota]').matches(':disabled') &&
-            !document.querySelector('[name=live_quota]').checked
+        try await expect("Live quota is fetched automatically with a Codex login", panel, view, """
+            document.querySelector('#usage-quota-plan').textContent.startsWith('实时账户额度') &&
+            document.querySelector('#usage-plan-progress').value===84
             """)
+        guard FileManager.default.fileExists(atPath: invoked.path) else {
+            throw Failure("The live quota source was not invoked automatically")
+        }
         for (mode, result) in [
             ("live", """
                 document.querySelector('#usage-quota-plan').textContent.startsWith('实时账户额度') &&
                 document.querySelector('#usage-plan-progress').value===84 &&
                 document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===30
+                """),
+            ("mixed", """
+                document.querySelector('#usage-quota-plan').textContent.startsWith('实时账户额度与本机记录') &&
+                document.querySelector('#usage-plan-progress').value===84 &&
+                document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===45 &&
+                document.querySelector('#usage-plan-second-label').parentElement.querySelector('.usage-plan-note').textContent.startsWith('本机记录')
+                """),
+            ("signed-out", """
+                document.querySelector('#usage-quota-plan').textContent.startsWith('实时额度暂无数据 · 本机记录') &&
+                document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===45
                 """),
             ("same", """
                 document.querySelector('#usage-quota-plan').textContent.startsWith('实时查询失败 · 同一账户的本机记录') &&
@@ -744,16 +1129,23 @@ enum OfficeUITest {
                 [...document.querySelectorAll('.usage-plan progress')].every(bar => bar.closest('[hidden]'))
                 """),
         ] {
-            try mode.write(to: outcome, atomically: true, encoding: .utf8)
             _ = try await view.evaluateJavaScript("document.querySelector('[name=live_quota]').click()")
-            try await expect("Live quota handles the \(mode) app-server result", panel, view, result)
-            _ = try await view.evaluateJavaScript("document.querySelector('[name=live_quota]').click()")
-            try await expect("Disabling live quota restores the default log source", panel, view, """
+            try await expect("Disabling live quota restores the log source", panel, view, """
                 document.querySelector('#usage-quota-plan').textContent.startsWith('本机额度记录') &&
+                !document.querySelector('[name=live_quota]').checked &&
                 document.querySelector('#settings-feedback').textContent==='已保存' &&
                 document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===45
                 """)
+            try mode.write(to: outcome, atomically: true, encoding: .utf8)
+            _ = try await view.evaluateJavaScript("document.querySelector('[name=live_quota]').click()")
+            try await expect("Live quota handles the \(mode) app-server result", panel, view, result)
         }
+        _ = try await view.evaluateJavaScript("document.querySelector('[name=live_quota]').click()")
+        try await expect("Live quota can stay disabled after the fixture closes", panel, view, """
+            document.querySelector('#usage-quota-plan').textContent.startsWith('本机额度记录') &&
+            !document.querySelector('[name=live_quota]').checked &&
+            document.querySelector('#settings-feedback').textContent==='已保存'
+            """)
         _ = try await view.evaluateJavaScript("document.querySelector('#close-settings').click()")
         office.offscreenQuotaExecutable = nil
     }

@@ -155,6 +155,25 @@ private final class OfficeToolbar: NSView {
 @MainActor
 final class OfficeChrome: NSView {
     static let preferredPanelSize = NSSize(width: 708, height: 620)
+    static let maximumVisibleFloors = 4
+    private static let toolbarHeight: CGFloat = 42
+    private static let dividerHeight: CGFloat = 1
+    private static let sceneTopSpacing: CGFloat = 3
+    private static let sceneBottomSpacing: CGFloat = 14
+    static let preferredSceneHeight = preferredPanelSize.height
+        - toolbarHeight - dividerHeight - sceneTopSpacing - sceneBottomSpacing
+
+    static func panelFrame(in visibleFrame: NSRect, anchor: NSRect?, floorCount: Int) -> NSRect {
+        let bounds = visibleFrame.insetBy(dx: 8, dy: 6)
+        let top = min(bounds.maxY, (anchor?.minY ?? bounds.maxY + 6) - 6)
+        let width = min(preferredPanelSize.width, bounds.width)
+        let extraFloors = max(0, min(floorCount, maximumVisibleFloors) - 2)
+        let preferredHeight = preferredPanelSize.height + min(250, CGFloat(extraFloors) * 160)
+        let height = min(preferredHeight, max(1, top - bounds.minY))
+        let center = anchor?.midX ?? bounds.maxX
+        let left = min(max(bounds.minX, center - width / 2), bounds.maxX - width)
+        return NSRect(x: left, y: top - height, width: width, height: height)
+    }
 
     let materialView: NSView
     private let toolbar = OfficeToolbar(frame: .zero)
@@ -227,16 +246,16 @@ final class OfficeChrome: NSView {
             toolbar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             toolbar.topAnchor.constraint(equalTo: content.topAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: 42),
+            toolbar.heightAnchor.constraint(equalToConstant: Self.toolbarHeight),
             divider.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
             divider.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
             divider.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
-            divider.heightAnchor.constraint(equalToConstant: 1),
+            divider.heightAnchor.constraint(equalToConstant: Self.dividerHeight),
             // Leave the native material visible around the WebKit scene card.
             scene.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
             scene.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
-            scene.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 3),
-            scene.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14)
+            scene.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: Self.sceneTopSpacing),
+            scene.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -Self.sceneBottomSpacing)
         ])
         updateStaticLabels()
     }

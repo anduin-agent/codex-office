@@ -158,6 +158,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     #if OFFICE_UI_TEST
     private var testLoginEnabled = false
     var offscreenProjectDirectoryPicker: ((String?) -> URL?)?
+    var offscreenPanelBounds: NSRect?
     #endif
     private var pendingPanelAction: OfficeToolbarAction?
     private var snapshot: ActivitySnapshot?
@@ -172,6 +173,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     #endif
     private var usageLoaded = false
     private var showingUsage = false
+    private var officeFloorCount = 0
+    private var officeZoom: Int
     private var usageDayTask: Task<Void, Never>?
     private var collaboration: Collaboration?
     private var autoReceipts: [String: Bool] = [:]
@@ -184,7 +187,9 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         let home = OfficeCollectorPaths.codexHome(codexHome)
         let settings = OfficeCollectorPaths.settings(configFile)
         self.codexHome = home
-        liveQuotaEnabled = (try? settings.load())?["live_quota"] as? Bool ?? false
+        let document = try? settings.load()
+        liveQuotaEnabled = document?["live_quota"] as? Bool ?? OfficeSettings.defaultLiveQuota
+        officeZoom = document?["office_zoom"] as? Int ?? 100
         let preference = settings.preferredLanguage()
         languagePreference = preference
         language = preference.resolved
@@ -446,26 +451,29 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     private var statusButtonFrame: NSRect? {
-        guard let button = statusItem.button, let buttonWindow = button.window else { return nil }
+        guard let button = statusItem?.button, let buttonWindow = button.window else { return nil }
         return buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+    }
+
+    private func positionWindow() {
+        let anchor = statusButtonFrame
+        let screen = anchor.flatMap { rect in NSScreen.screens.first { $0.frame.intersects(rect) } }
+            ?? NSScreen.main
+        var visibleFrame = screen?.visibleFrame
+        #if OFFICE_UI_TEST
+        if let offscreenPanelBounds { visibleFrame = offscreenPanelBounds }
+        #endif
+        if let visibleFrame {
+            let frame = OfficeChrome.panelFrame(in: visibleFrame, anchor: anchor,
+                                               floorCount: showingUsage ? 0 : officeFloorCount)
+            if window.frame != frame { window.setFrame(frame, display: window.isVisible) }
+        }
+        sizeChromeToPanel()
     }
 
     private func showWindow() {
         if NSApp.isHidden { NSApp.unhideWithoutActivation() }
-        let anchor = statusButtonFrame
-        let screen = anchor.flatMap { rect in NSScreen.screens.first { $0.frame.intersects(rect) } }
-            ?? NSScreen.main
-        if let screen {
-            let bounds = screen.visibleFrame.insetBy(dx: 8, dy: 6)
-            let top = min(bounds.maxY, (anchor?.minY ?? bounds.maxY + 6) - 6)
-            let preferredSize = OfficeChrome.preferredPanelSize
-            let width = min(preferredSize.width, bounds.width)
-            let height = min(preferredSize.height, max(1, top - bounds.minY))
-            let center = anchor?.midX ?? bounds.maxX
-            let left = min(max(bounds.minX, center - width / 2), bounds.maxX - width)
-            window.setFrame(NSRect(x: left, y: top - height, width: width, height: height), display: true)
-        }
-        sizeChromeToPanel()
+        positionWindow()
         window.orderFrontRegardless()
         window.makeKey()
         startClickMonitors()
@@ -523,13 +531,22 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         syncVisibility()
     }
 
+    func applicationDidChangeScreenParameters(_ notification: Notification) {
+        if windowVisible { positionWindow() }
+    }
+
     private func loadScene() {
         sceneReady = false
         chrome.setReady(false)
         let controller = webView.configuration.userContentController
         controller.removeAllUserScripts()
         controller.addUserScript(WKUserScript(
-            source: "window.officeNativeToolbar = true; window.officeInitialLanguage = '\(language.rawValue)';",
+            source: """
+                window.officeNativeToolbar = true;
+                window.officePreferredSceneHeight = \(OfficeChrome.preferredSceneHeight);
+                window.officeInitialZoom = \(officeZoom);
+                window.officeInitialLanguage = '\(language.rawValue)';
+                """,
             injectionTime: .atDocumentStart, forMainFrameOnly: true
         ))
         webView.loadFileURL(sceneURL, allowingReadAccessTo: sceneURL.deletingLastPathComponent())
@@ -592,16 +609,20 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     private func refreshUsage() async {
         requestLiveQuotaIfNeeded()
-        let account = liveQuotaEnabled ? liveQuota?.account : nil
+        let account = quotaLogAccount
         let result = (try? await usageCollector.snapshot(refreshPrices: windowVisible, quotaAccount: account))
             .flatMap(TokenUsageSnapshot.init(data:))
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, account == quotaLogAccount else { return }
         usage = result
         usageQuotaAccount = account
         usageLoaded = true
         tokenMeter?.update(rate: result?.tokensPerMinute)
         refreshMenu()
         pushUsage()
+    }
+
+    private var quotaLogAccount: String? {
+        liveQuotaEnabled ? liveQuota?.account : nil
     }
 
     private func pushUsage() {
@@ -635,7 +656,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         var payload = local
         if liveQuotaEnabled, let liveQuota {
             payload = liveQuota.displayPayload(local)
-        } else if liveQuotaEnabled || usageQuotaAccount != nil {
+        } else if usageQuotaAccount != nil {
             payload["quota"] = NSNull()
             payload["quota_windows"] = [] as [OfficeJSON]
             payload["quota_closed_windows"] = [] as [OfficeJSON]
@@ -657,6 +678,9 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         let uptime = ProcessInfo.processInfo.systemUptime
         guard liveQuotaEnabled, viewingUsage || menuBarMetric == .planRemaining,
               liveQuotaTask == nil, uptime >= nextLiveQuotaRead else { return }
+        #if OFFICE_UI_TEST
+        guard executable != nil else { return }
+        #endif
         #if !OFFICE_UI_TEST
         let executable = Self.codexExecutable()
         #endif
@@ -715,7 +739,15 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             markSceneReady()
         case "toolbarState":
             chrome.update(body)
-            showingUsage = body["view"] as? String == "usage"
+            let usageView = body["view"] as? String == "usage"
+            let floorCount = min(OfficeChrome.maximumVisibleFloors, max(0, body["floorCount"] as? Int ?? 0))
+            let resizePanel = showingUsage != usageView || officeFloorCount != floorCount
+            showingUsage = usageView
+            officeFloorCount = floorCount
+            if resizePanel && windowVisible { positionWindow() }
+            #if OFFICE_UI_TEST
+            if resizePanel && offscreenPanelBounds != nil && !windowVisible { positionWindow() }
+            #endif
             if !showingUsage { usageDayTask?.cancel() }
             else { requestLiveQuotaIfNeeded() }
         case "usageDay":
@@ -908,7 +940,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                 if let office = payload?["office"] as? [String: Any] {
                     self.applyMenuBarMetric(office["menu_bar_metric"])
                     self.applyOfficeLanguage(office["language"])
-                    let enabled = office["live_quota"] as? Bool ?? false
+                    self.officeZoom = office["office_zoom"] as? Int ?? 100
+                    let enabled = office["live_quota"] as? Bool ?? OfficeSettings.defaultLiveQuota
                     if enabled != self.liveQuotaEnabled {
                         self.liveQuotaEnabled = enabled
                         self.liveQuotaTask?.cancel()

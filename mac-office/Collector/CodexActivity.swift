@@ -6,8 +6,13 @@ final class ActivityProjects {
     private var detected: [String: String?] = [:]
     private var roots: [String] = []
     private var identifiers: [String: String] = [:]
+    private let managedRoots: [String]
 
-    init(_ settings: OfficeJSON) {
+    init(_ settings: OfficeJSON, managedDirectories: [[String: String]] = []) {
+        managedRoots = managedDirectories.compactMap { $0["path"] }
+        for entry in managedDirectories {
+            if let path = entry["path"], let name = entry["name"] { paths[path] = name }
+        }
         for (rawPath, name) in settings["projects"] as? [String: String] ?? [:] {
             guard let path = officeCanonicalPath(rawPath) else { continue }
             paths[path] = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -106,6 +111,13 @@ final class ActivityProjects {
         return match(workspace)
     }
 
+    func isManagedWorkspace(_ workspace: String?) -> Bool {
+        guard let workspace, !managedRoots.isEmpty else { return false }
+        if managedRoots.contains(where: { activityPath(workspace, liesIn: $0) }) { return true }
+        guard let root = gitRoot(workspace) else { return false }
+        return managedRoots.contains { activityPath(root, liesIn: $0) }
+    }
+
     func rows() -> [OfficeJSON] {
         let projects = paths.map { path, name in (id: projectID(path), name: name) }
         return projects.sorted {
@@ -130,6 +142,8 @@ final class CodexActivity {
     private var namesAt: Date?
     private var sidebarMemberships: [String: String] = [:]
     private var knownSidebarIDs = Set<String>()
+    private var managedDirectories: [[String: String]] = []
+    private var managedDirectoriesAt: Date?
 
     init(home: URL, settings: OfficeSettings,
          attentionPoll: ((Set<String>) -> [String: DesktopThreadStatus])? = nil) {
@@ -202,7 +216,11 @@ final class CodexActivity {
         let savedSettings = try? settings.load()
         let office = savedSettings ?? OfficeSettings.defaults()
         let language = (OfficeLanguage(rawValue: office["language"] as? String ?? "") ?? .simplifiedChinese).resolved
-        let projects = ActivityProjects(office)
+        if managedDirectoriesAt.map({ now.timeIntervalSince($0) >= 15 }) ?? true {
+            managedDirectories = readOfficeProjectDirectories(home)
+            managedDirectoriesAt = now
+        }
+        let projects = ActivityProjects(office, managedDirectories: managedDirectories)
         var coordination = ActivityCoordination(home: home, section: office["coordination_section"] as? String)
         let base = home.appendingPathComponent("sessions", isDirectory: true)
         let activity = readSessions(base: base, cutoff: now.addingTimeInterval(-Self.recent), coordinators: coordination.members)
@@ -228,7 +246,8 @@ final class CodexActivity {
         }
         let linked = coordination.linkedThreads(sources: sources)
         let sidebarIDs = Set(sources.keys).union(linked.keys)
-        let (sidebar, assignments) = readOfficeSidebar(home, threadIDs: sidebarIDs)
+        var (sidebar, assignments) = readOfficeSidebar(home, threadIDs: sidebarIDs)
+        sidebar["has_projects"] = !managedDirectories.isEmpty
         if sidebar["source_status"] as? String == "ok" {
             sidebarMemberships = assignments
             knownSidebarIDs = sidebarIDs
@@ -268,6 +287,7 @@ final class CodexActivity {
             var row: OfficeJSON = [
                 "id": id,
                 "project_id": (origin as Any?) ?? NSNull(),
+                "sidebar_project": projects.isManagedWorkspace(owner.workspace),
                 "parent_id": (source.parent as Any?) ?? NSNull(),
                 "root_id": root,
                 "status": status,
@@ -282,13 +302,15 @@ final class CodexActivity {
             threads.append((last, id, row))
         }
         for (id, metadata) in linked where sources[id] == nil {
-            let origin = projects.membership(id: id, workspace: officeCanonicalPath(metadata.cwd))
+            let workspace = officeCanonicalPath(metadata.cwd)
+            let origin = projects.membership(id: id, workspace: workspace)
             let seconds = metadata.last ?? 0
             let last = Date(timeIntervalSince1970: (-62_135_596_800..<253_402_300_800).contains(seconds) ? seconds : 0)
             let title = metadata.name.map { ["chat_title": $0] } ?? [:]
             var row: OfficeJSON = [
                 "id": id,
                 "project_id": (origin as Any?) ?? NSNull(), "parent_id": NSNull(), "root_id": id,
+                "sidebar_project": projects.isManagedWorkspace(workspace),
                 "status": "idle", "last_activity": officeISODate(last), "terminal_at": NSNull(),
                 "token_total": NSNull(), "cross_edits": []
             ]

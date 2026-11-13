@@ -80,25 +80,59 @@
     .view-tabs button:hover, .view-tabs button[aria-pressed="true"] {
       border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); background: var(--active); color: var(--accent);
     }
+    .office-sections {
+      display: flex; flex: none; gap: 5px; overflow-x: auto; padding: 6px 12px;
+      background: var(--panel); border-bottom: 1px solid var(--line);
+    }
+    .office-sections button {
+      flex: none; max-width: min(220px, 65vw); min-height: 26px; padding: 3px 9px;
+      border-radius: 999px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .office-sections button[aria-pressed="true"] { background: var(--active); color: var(--accent); font-weight: 650; }
     .icon-button { display: grid; place-items: center; width: 30px; height: 29px; padding: 0; }
     .icon-button svg { width: 16px; height: 16px; }
+    .office-zoom { display: flex; gap: 5px; margin-inline-start: auto; }
+    .office-zoom .icon-button { min-width: 28px; width: 28px; height: 28px; padding: 0; }
+    .office-scene { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; }
+    .office-scene::-webkit-scrollbar { width: 9px; height: 9px; }
+    .office-scene::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--muted) 55%, transparent);
+      border: 2px solid transparent; border-radius: 9px; background-clip: padding-box;
+    }
     .stage {
       --aura-strength: 72%;
-      flex: 1; min-height: 240px; position: relative; isolation: isolate; overflow: hidden;
+      height: 100%; position: relative; isolation: isolate;
       user-select: none;
       background: radial-gradient(ellipse at 50% 49%, color-mix(in srgb, var(--aura) var(--aura-strength), transparent), transparent 71%);
     }
     .native-toolbar .stage { --aura-strength: 38%; }
-    canvas, .annotations, .packets, .agent-links { position: absolute; inset: 0; width: 100%; height: 100%; }
-    .annotations, .packets, .agent-links { pointer-events: none; }
+    canvas, .annotations, .packets, .agent-links, .idle-floors, .floor-focus { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .stage canvas { position: sticky; inset: 0 auto auto 0; display: block; }
+    .annotations, .packets, .agent-links, .idle-floors, .floor-focus { pointer-events: none; }
+    .floor-focus { background: var(--accent); opacity: .13; }
     .marker {
       position: absolute; margin: 0; padding: 3px 5px; white-space: nowrap;
-      font-size: 10px; line-height: 1.25; border: 0; border-radius: 5px;
+      font-size: calc(10px * var(--label-scale, 1)); line-height: 1.25; border: 0; border-radius: 5px;
       color: var(--text); background: var(--panel); transform: translate(-50%, -50%);
       overflow: hidden; text-overflow: ellipsis;
     }
-    .floor-marker { padding: 4px 7px; font-size: 11px; font-weight: 650; color: var(--accent); background: var(--active); }
+    .floor-marker { padding: 4px 7px; font-size: calc(11px * var(--label-scale, 1)); font-weight: 650; color: var(--accent); background: var(--active); }
+    .floor-marker[data-located="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
     .floor-marker[data-floor="work"] { background: color-mix(in srgb, var(--mint) 15%, var(--panel)); color: var(--mint); }
+    .idle-floor {
+      position: absolute;
+    }
+    .idle-floor i {
+      position: absolute; left: 0; top: 0; width: var(--dot-size); height: var(--dot-size);
+      border-radius: 50%; color: var(--mint); opacity: .66;
+      background: radial-gradient(circle at 34% 30%, var(--panel), currentColor 62%);
+    }
+    .idle-floor i:nth-child(2) { color: var(--amber); }
+    .idle-floor i:nth-child(3) { color: var(--accent); }
+    .floor-page {
+      display: flex; align-items: center; gap: 4px; pointer-events: auto; font-variant-numeric: tabular-nums;
+    }
+    .floor-page button { padding: 0 5px; }
     .project-marker {
       background: none; font-weight: 650;
       text-shadow: 0 1px 4px var(--window), 0 0 8px var(--window);
@@ -425,15 +459,37 @@
   <div class="view-tabs" role="group" aria-label="面板视图">
     <button id="show-office" type="button" aria-controls="office-view" aria-pressed="true">办公室</button>
     <button id="show-usage" type="button" aria-controls="usage-panel" aria-pressed="false">用量</button>
+    <div id="office-zoom" class="office-zoom" role="group" aria-label="办公室缩放">
+      <button id="office-zoom-out" class="icon-button" type="button" aria-label="缩小办公室" title="缩小办公室">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.3 15.3 4.7 4.7M8 10.5h5"/>
+        </svg>
+      </button>
+      <button id="office-zoom-in" class="icon-button" type="button" aria-label="放大办公室" title="放大办公室">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.3 15.3 4.7 4.7M8 10.5h5m-2.5-2.5v5"/>
+        </svg>
+      </button>
+      <button id="office-zoom-reset" class="icon-button" type="button" aria-label="重置办公室缩放" title="重置办公室缩放" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 5v5h5M4.3 10a8 8 0 1 1 1.5 7.6"/>
+        </svg>
+      </button>
+    </div>
   </div>
   <div id="office-view">
-  <main class="stage" aria-label="上层是项目工位，下层是临时工作工位">
+  <div id="office-sections" class="office-sections" role="group" aria-label="Codex 侧栏分区" hidden></div>
+  <div class="office-scene">
+  <main class="stage" aria-label="上层是项目工位，下层是无项目工位">
     <canvas id="webgl" aria-hidden="true"></canvas>
     <canvas id="fallback" aria-hidden="true" hidden></canvas>
+    <div class="floor-focus" aria-hidden="true" hidden></div>
     <div class="agent-links" aria-hidden="true"></div>
     <div class="packets" aria-hidden="true"></div>
+    <div class="idle-floors" aria-hidden="true"></div>
     <div class="annotations"></div>
   </main>
+  </div>
   <div class="pages" hidden>
     <div class="page" data-floor="project" hidden>
       <button type="button" data-step="-1" aria-label="上一页项目工位">‹</button>
@@ -441,9 +497,9 @@
       <button type="button" data-step="1" aria-label="下一页项目工位">›</button>
     </div>
     <div class="page" data-floor="work" hidden>
-      <button type="button" data-step="-1" aria-label="上一页临时工作工位">‹</button>
+      <button type="button" data-step="-1" aria-label="上一页无项目工位">‹</button>
       <span></span>
-      <button type="button" data-step="1" aria-label="下一页临时工作工位">›</button>
+      <button type="button" data-step="1" aria-label="下一页无项目工位">›</button>
     </div>
   </div>
   <footer class="bar">
@@ -531,7 +587,7 @@
           </div>
           <div class="settings-choice">
             <label class="login-item-choice"><input type="checkbox" name="live_quota" aria-describedby="help-live-quota"><span>实时账户额度</span></label>
-            <small id="help-live-quota">通过本机 Codex 登录会话向 OpenAI 查询额度。关闭时使用本机日志。</small>
+            <small id="help-live-quota">默认开启。优先使用本机 Codex 登录会话查询额度，本机日志提供用量明细和备用额度。</small>
           </div>
           <div class="settings-choice">
             <div class="setting-heading">
@@ -544,7 +600,7 @@
             </select>
             <div id="visible-section-list" role="group" aria-label="选择 Codex 侧栏分区" hidden></div>
             <small id="visible-section-note" role="status" hidden></small>
-            <span id="help-sections" hidden>按 Codex 侧栏分区筛选工位。可多选，也可选「未分区」。菜单栏计数和用量仍汇总所有聊天。</span>
+            <span id="help-sections" hidden>每个显示的分区占一层。「项目」显示归属 Codex 项目且尚未移入自建分区的聊天。菜单栏计数和用量仍汇总所有聊天。</span>
           </div>
           <div class="settings-choice">
             <div class="setting-heading">
@@ -571,7 +627,7 @@
               <textarea name="thread_projects" rows="4" aria-label="聊天归属 JSON"></textarea>
             </details>
             <button class="setting-help" type="button" aria-label="聊天归属说明" aria-describedby="help-assignments">?</button>
-            <span id="help-assignments" hidden>手动指定聊天的归属。JSON 的键是聊天 UUID，值是项目绝对路径；填写 null 归为临时工作。</span>
+            <span id="help-assignments" hidden>手动指定聊天的项目归属。JSON 的键是聊天 UUID，值是项目绝对路径。填写 null 会将聊天放在无项目工位。</span>
           </div>
         </fieldset>
       </div>
@@ -686,13 +742,38 @@
   const t = i18n.text;
   const byId = id => document.getElementById(id);
   const nativeToolbar = document.documentElement.classList.contains('native-toolbar');
+  const scene = document.querySelector('.office-scene');
   const stage = document.querySelector('.stage');
+  const zoomControls = byId('office-zoom');
+  const zoomOut = byId('office-zoom-out');
+  const zoomIn = byId('office-zoom-in');
+  const zoomReset = byId('office-zoom-reset');
   const canvas = byId('webgl');
   const fallback = byId('fallback');
   const annotations = document.querySelector('.annotations');
+  const floorFocus = document.querySelector('.floor-focus');
+  const idleFloorLayer = document.querySelector('.idle-floors');
+  const idleFloors = new Map();
+  const visibleIdleFloors = new Set();
+  let idleTimer = 0;
+  let lastIdleTick = 0;
+  const idleFloorVisibility = new IntersectionObserver(entries => {
+    for (const {target,isIntersecting} of entries) {
+      const floor = idleFloors.get(target.dataset.floor);
+      if (floor?.node!==target) continue;
+      target.dataset.inView = String(isIntersecting);
+      if (isIntersecting) visibleIdleFloors.add(floor);
+      else {
+        visibleIdleFloors.delete(floor);
+        for (const dot of floor.dots) dot.flash?.cancel();
+      }
+    }
+    syncIdleMotion();
+  },{root:scene});
   const agentLinks = document.querySelector('.agent-links');
   const packets = document.querySelector('.packets');
   const detail = byId('detail');
+  const officeSections = byId('office-sections');
   const chatTitleTooltip = byId('chat-title-tooltip');
   const source = byId('source');
   const waitingCount = byId('waiting-count');
@@ -720,6 +801,16 @@
   const COS_YAW = Math.cos(YAW), SIN_YAW = Math.sin(YAW);
   const COS_PITCH = Math.cos(PITCH), SIN_PITCH = Math.sin(PITCH);
   const PROJECT = 4.55, WORK = 0.00;
+  const PROJECT_SECTION = 'system:projects';
+  const MAX_VISIBLE_FLOORS = 4;
+  const FLOOR_PITCH = PROJECT*COS_PITCH;
+  const TWO_FLOOR_VIEW = 8.88;
+  const MIN_ZOOM = 60, DEFAULT_ZOOM = 100, MAX_ZOOM = 160, ZOOM_STEP = 10;
+  let officeZoom = window.officeInitialZoom ?? DEFAULT_ZOOM;
+  let gestureZoom;
+  let gestureScale;
+  let gestureSaveTimer = 0;
+  const ACTIVITY_ORDER_INTERVAL = 30000;
   const colors = {
     porcelain: ['#e3e8f9','#cbd4f0'], helmetTrim: ['#9daada','#8295d1'],
     agentShell: ['#bce9e0','#a3d8ce'], agentTrim: ['#5c9f98','#5d9e98'],
@@ -824,10 +915,15 @@
   const robotLook = {shell:'porcelain',trim:'helmetTrim',joint:'rubber',visor:'visor',eyes:'eyes'};
   const agentLook = {...robotLook,shell:'agentShell',trim:'agentTrim'};
   const AGENT_SIZE = 0.67;
+  const SECTION_DESK_SCALE = 1.12;
+  const SECTION_DESKS_PER_PAGE = 4;
+  const SECTION_FLOOR_WIDTH = 12.4;
+  const SECTION_MAX_HELPERS = 10;
+  const SECTION_HELPER_SCALES = [1,.9,.8];
 
-  function seatedRobot(outfit, headset, simplified, helper=false) {
+  function seatedRobot(outfit, headset, simplified, helper=false, scale=1) {
     const look=helper ? agentLook : robotLook;
-    const s=0.48*(helper ? AGENT_SIZE : 1);
+    const s=0.48*scale*(helper ? AGENT_SIZE : 1);
     const p=point => mul(point,s);
     function rigPart(origin=[0,0,0]) {
       const model=mesh();
@@ -915,20 +1011,27 @@
     m.box(x,y+0.662,z,0.38,0.014,0.114,'paper',0.016);
   }
 
-  function desk(m,x,y,z,accent) {
+  function desk(m,x,y,z,accent,scale=1) {
+    const start = m.vertices.length;
     chair(m,x,y,z);
     m.box(x,y+0.57,z+0.45,1.20,0.11,0.76,'desk',0.075,'wood');
     for (const side of [-1,1]) m.box(x+side*0.49,y+0.27,z+0.45,0.11,0.50,0.56,'wood',0.04);
     keyboard(m,x,y,z+0.30);
     workstationScreen(m,x+0.08,y,z+0.64);
     m.disk(x+0.43,y+0.70,z+0.54,0.070,0.145,accent);
+    if (scale===1) return;
+    for (let i=start; i<m.vertices.length; i+=7) {
+      m.vertices[i] = x+(m.vertices[i]-x)*scale;
+      m.vertices[i+1] = y+(m.vertices[i+1]-y)*scale;
+      m.vertices[i+2] = z+(m.vertices[i+2]-z)*scale;
+    }
   }
 
-  const agentDesk = mesh();
-  desk(agentDesk,0,0,0,'teal');
-  for (let i=0; i<agentDesk.vertices.length; i+=7) {
-    for (let axis=0; axis<3; axis++) agentDesk.vertices[i+axis] *= AGENT_SIZE;
-  }
+  const agentDesks = new Map(SECTION_HELPER_SCALES.map(scale => {
+    const model = mesh();
+    desk(model,0,0,0,'teal',AGENT_SIZE*scale);
+    return [scale,model];
+  }));
 
   function plant(m,x,y,z,size=1) {
     m.disk(x,y+0.18*size,z,0.19*size,0.36*size,'wood',0.95);
@@ -966,6 +1069,11 @@
     return [view.width/2+p[0]*view.scale,view.floor-p[1]*view.scale,p[2]];
   }
 
+  function visibleAt(y) {
+    const position = project([0,y,0])[1]-scene.scrollTop;
+    return position>=-3*view.scale && position<=view.viewportHeight+3.6*view.scale;
+  }
+
   function webgl() {
     const gl=canvas.getContext('webgl2',{alpha:true,antialias:true});
     if (!gl) return null;
@@ -975,14 +1083,14 @@
       'in float material;',
       'uniform vec2 yaw, pitch, facing, tilt, scale;',
       'uniform vec3 offset, pigments['+names.length+'];',
-      'uniform float baseline;',
+      'uniform float baseline, depthOrigin, horizontalOffset;',
       'out vec3 color;',
       'vec3 rotateY(vec3 v, vec2 a) { return vec3(v.x*a.x+v.z*a.y,v.y,v.z*a.x-v.x*a.y); }',
       'vec3 orient(vec3 v) { return rotateY(vec3(v.x,v.y*tilt.x-v.z*tilt.y,v.z*tilt.x+v.y*tilt.y),facing); }',
       'vec3 cam(vec3 p) { vec3 r=rotateY(p,yaw); return vec3(r.x,r.y*pitch.x-r.z*pitch.y,r.z*pitch.x+r.y*pitch.y); }',
       'void main() {',
       ' vec3 p=cam(orient(position)+offset);',
-      ' gl_Position=vec4(p.x*scale.x,p.y*scale.y+baseline,-p.z/16.0,1.0);',
+      ' gl_Position=vec4(p.x*scale.x+horizontalOffset,p.y*scale.y+baseline,(depthOrigin-p.z)/16.0,1.0);',
       ' vec3 n=cam(orient(normal));',
       ' float l=max(0.0,dot(n,vec3(-0.39,0.74,0.55)));',
       ' float gleam=pow(l,11.0)*0.10;',
@@ -1006,7 +1114,7 @@
     if (!gl.getProgramParameter(program,gl.LINK_STATUS)) return null;
     gl.useProgram(program);
     gl.enable(gl.DEPTH_TEST);
-    const uniforms=Object.fromEntries(['yaw','pitch','facing','tilt','scale','offset','pigments','baseline']
+    const uniforms=Object.fromEntries(['yaw','pitch','facing','tilt','scale','offset','pigments','baseline','depthOrigin','horizontalOffset']
       .map(name => [name,gl.getUniformLocation(program,name==='pigments'?'pigments[0]':name)]));
     const attr=['position','normal','material'].map(name => gl.getAttribLocation(program,name));
     attr.forEach(location => gl.enableVertexAttribArray(location));
@@ -1033,8 +1141,11 @@
       paint(parts) {
         gl.viewport(0,0,canvas.width,canvas.height);
         gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-        gl.uniform2f(uniforms.scale,2*view.scale/view.width,2*view.scale/view.height);
-        gl.uniform1f(uniforms.baseline,1-2*view.floor/view.height);
+        const baseline = view.floor-scene.scrollTop;
+        gl.uniform2f(uniforms.scale,2*view.scale/view.viewportWidth,2*view.scale/view.viewportHeight);
+        gl.uniform1f(uniforms.horizontalOffset,(view.width-2*scene.scrollLeft)/view.viewportWidth-1);
+        gl.uniform1f(uniforms.baseline,1-2*baseline/view.viewportHeight);
+        gl.uniform1f(uniforms.depthOrigin,(baseline-view.viewportHeight/2)/view.scale*Math.tan(PITCH));
         for (const {model,offset=[0,0,0],angle=0,tilt=0} of parts) {
           const data=buffer(model);
           gl.uniform2f(uniforms.facing,Math.cos(angle),Math.sin(angle));
@@ -1054,6 +1165,8 @@
     const ctx=fallback.getContext('2d');
     if (!ctx) return;
     const {width,height}=fallback;
+    const scrollLeft = scene.scrollLeft;
+    const scrollTop = scene.scrollTop;
     if (softwareFrame?.image.width!==width || softwareFrame?.image.height!==height) {
       softwareFrame={image:ctx.createImageData(width,height),depth:new Float32Array(width*height)};
     }
@@ -1073,7 +1186,7 @@
         if (normal[2]<=0) continue;
         const [[ax,ay,az],[bx,by,bz],[cx,cy,cz]]=[i,i+7,i+14].map(j => {
           const [x,y,z]=project(add(offset,rotate(data[j],data[j+1],data[j+2])));
-          return [x*view.ratio,y*view.ratio,z];
+          return [(x-scrollLeft)*view.ratio,(y-scrollTop)*view.ratio,z];
         });
         const area=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);
         if (Math.abs(area)<0.00001) continue;
@@ -1081,6 +1194,7 @@
         const x1=Math.min(width-1,Math.floor(Math.max(ax,bx,cx)));
         const y0=Math.max(0,Math.floor(Math.min(ay,by,cy)));
         const y1=Math.min(height-1,Math.floor(Math.max(ay,by,cy)));
+        if (x0>x1 || y0>y1) continue;
         const uX=(by-cy)/area, uY=(cx-bx)/area;
         const vX=(cy-ay)/area, vY=(ax-cx)/area;
         const material=data[i+6];
@@ -1133,8 +1247,9 @@
     initialized: false,
     source: null,
     collectedAt: null,
-    sidebar: {available:false,sections:new Map()},
+    sidebar: {available:false,hasProjects:false,sections:new Map()},
     visibleSections: null,
+    selectedSection: undefined,
     projectNames: new Map(),
     roots: new Map(),
     remembered: new Map(),
@@ -1159,6 +1274,8 @@
     pendingDispatchPulses: [],
     selected: null,
     pages: { project: 0, work: 0 },
+    sectionSeats: new Map(),
+    sectionPages: new Map(),
     draftCoordinator: '',
     draftExecutors: new Set(),
     timer: 0,
@@ -1166,13 +1283,13 @@
     pulses: []
   };
   const avatars = new Map();
-  const building = mesh();
-  floor(building,WORK,false);
-  floor(building,PROJECT,true);
-  for (const y of [PROJECT,WORK]) {
-    plant(building,-5.65,y,-1.63,0.86);
-    plant(building,5.61,y,-1.59,0.94);
-  }
+  const floorModels = [false,true].map(isProject => {
+    const model = mesh();
+    floor(model,0,isProject);
+    plant(model,-5.65,0,-1.63,0.86);
+    plant(model,5.61,0,-1.59,0.94);
+    return model;
+  });
   const lounge = mesh();
   lounge.box(3.62,WORK+0.05,0,3.75,0.048,3.10,'rugTeal',0.18);
   lounge.box(3.61,WORK+0.25,-0.89,2.06,0.39,0.79,'teal',0.11);
@@ -1202,17 +1319,18 @@
   let softwareFrame = null;
   let paintKey = '';
   let robotTimer = 0;
-  let layout = { roles: [], agents: [], rooms: [], routes: new Map(), pageCounts: { project: 1, work: 1 } };
+  let layout = { floors: [], roles: [], agents: [], rooms: [], routes: new Map() };
   let agentSides = new Map();
-  let geometry = { key: '', office: null, highlights: new Map() };
+  let geometry = {key:'',office:null,desks:new Map(),highlights:new Map()};
   let markersKey = '';
   let firstClickChat = null;
   let chatHover = null;
   let dialogKey = '';
   let groupPickerKey = '';
+  let officeSectionsKey = '';
 
   function projectName(id) {
-    return id ? state.projectNames.get(id) || t('项目') : t('工作');
+    return id ? state.projectNames.get(id) || t('项目') : t('无项目');
   }
 
   function chatTitle(thread) {
@@ -1240,8 +1358,66 @@
     stopPulses();
   }
 
+  function officeSection(thread) {
+    if (typeof thread?.section_id==='string') return thread.section_id;
+    if (thread?.sidebar_project===true) return PROJECT_SECTION;
+    return thread?.section_id;
+  }
+
   function visibleInOffice(thread) {
-    return state.visibleSections===null || (thread && state.visibleSections.has(thread.section_id));
+    return Boolean(thread) && (state.visibleSections===null || state.visibleSections.has(officeSection(thread)));
+  }
+
+  function renderOfficeSections() {
+    const choices = layout.sectionMode ? layout.floors.map(({id,name}) => [id,name]) : [];
+    if (!choices.some(([id]) => id===state.selectedSection)) state.selectedSection = undefined;
+    officeSections.hidden = !choices.length;
+    choices.unshift([undefined,t('全部')]);
+    const key = JSON.stringify(choices);
+    if (officeSectionsKey!==key) {
+      officeSectionsKey = key;
+      officeSections.replaceChildren(...choices.map(([id,name]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = button.title = name;
+        button.addEventListener('click',() => {
+          state.selectedSection = id;
+          renderOfficeSections();
+          updateFloorFocus();
+          const floor = layout.floors.find(floor => floor.id===id);
+          if (floor && view) revealFloor(floor.y);
+          else {
+            scene.scrollLeft = view ? (view.width-view.viewportWidth)/2 : 0;
+            scene.scrollTop = 0;
+          }
+        });
+        return button;
+      }));
+    }
+    for (const [index,[id]] of choices.entries()) {
+      officeSections.children[index].setAttribute('aria-pressed',String(state.selectedSection===id));
+    }
+  }
+
+  function floorCorners(y) {
+    return [[-6.25,-2.14],[-6.25,2.33],[6.25,2.33],[6.25,-2.14]]
+      .map(([x,z]) => project([x,y+0.13,z]));
+  }
+
+  function revealFloor(y,x=0,z=0) {
+    const [left,top] = project([x,y,z]);
+    scene.scrollLeft = left-view.viewportWidth/2;
+    scene.scrollTop = top-view.viewportHeight/2;
+  }
+
+  function updateFloorFocus() {
+    const floor = view && layout.floors.find(({id}) => id===state.selectedSection);
+    floorFocus.hidden = !floor;
+    if (floor) floorFocus.style.clipPath = 'polygon('+floorCorners(floor.y).map(([x,y]) => x+'px '+y+'px').join(',')+')';
+    const id = floor?.id===null ? 'unsectioned' : floor?.id;
+    for (const node of annotations.querySelectorAll('.floor-marker')) {
+      node.dataset.located = String(node.dataset.floor===id);
+    }
   }
 
   function updateSidebar(value) {
@@ -1253,7 +1429,11 @@
         sections.set(section.id,section.name);
       }
     }
-    state.sidebar = {available,sections:available || sections.size ? sections : state.sidebar.sections};
+    state.sidebar = {
+      available,
+      hasProjects:value.has_projects ?? state.sidebar.hasProjects,
+      sections:available || sections.size ? sections : state.sidebar.sections
+    };
     if (settingsDialog.open) renderSectionSettings();
   }
 
@@ -1445,22 +1625,38 @@
     return hash % outfits.length;
   }
 
-  function routeTo(x,y) {
+  function routeTo(x,y,origin=PROJECT) {
     const lane = x<0 ? -1 : 1;
-    if (y===PROJECT) return [[lane*0.66,PROJECT,1.84],[x,PROJECT,1.56],[x,PROJECT,0.72]];
-    return [[lane*0.66,PROJECT,1.84],[lane*5.58,PROJECT,1.86],
-      [lane*5.58,WORK,1.86],[x,WORK,1.56],[x,WORK,0.88]];
+    if (y===origin) return [[lane*0.66,y,1.84],[x,y,1.56],[x,y,0.72]];
+    return [[lane*0.66,origin,1.84],[lane*5.58,origin,1.86],
+      [lane*5.58,y,1.86],[x,y,1.56],[x,y,0.88]];
   }
 
   function buildLayout() {
     const departures = [...state.departures.values()].map(item => item.thread);
-    assignSeats([...state.active,...departures]);
     const active = state.active.filter(visibleInOffice);
     const waiting = active.filter(thread => thread.status==='waiting');
-    const shown = [...active,...departures.filter(thread => visibleInOffice(currentThread(thread.id)))];
+    const shown = [...active,...departures.map(thread => {
+      const current = currentThread(thread.id);
+      return {...thread,section_id:current?.section_id,sidebar_project:current?.sidebar_project};
+    }).filter(visibleInOffice)];
     const threadIds = new Set(shown.map(thread => thread.id));
     const collaboration = visibleInOffice(currentThread(state.collaboration?.coordinator_id)) ? state.collaboration : null;
     const executors = (collaboration?.executors ?? []).filter(item => visibleInOffice(currentThread(item.thread_id)));
+    const flashingProjects = new Set();
+    for (const {id,project} of state.flashes.values()) {
+      if (visibleInOffice(currentThread(id))) flashingProjects.add(project);
+    }
+    const activity = {active,waiting,threadIds,collaboration,executors,flashingProjects};
+    if (state.sidebar.available || state.sidebar.hasProjects || state.sidebar.sections.size || state.visibleSections!==null) {
+      state.seats.clear();
+      state.emptyRooms.clear();
+      buildSectionLayout(shown,activity);
+      return;
+    }
+    state.sectionSeats.clear();
+    state.sectionPages.clear();
+    assignSeats([...state.active,...departures]);
     const destinations = new Set();
     for (const [id,project] of state.badges) {
       if (threadIds.has(id)) destinations.add(project);
@@ -1470,10 +1666,6 @@
       if (project) destinations.add(project);
     }
     const emptyRooms = [...state.emptyRooms].filter(([project]) => destinations.has(project));
-    const flashingProjects = new Set();
-    for (const {id,project} of state.flashes.values()) {
-      if (visibleInOffice(currentThread(id))) flashingProjects.add(project);
-    }
     const available = {project:new Set(),work:new Set()};
     const projectPages = new Map();
     function registerProject(project,room) {
@@ -1534,7 +1726,118 @@
         routes.set(thread_id,{points:routeTo(0,WORK),received});
       }
     }
-    layout = {roles,agents:[],rooms:[...rooms.values()],routes,availablePages,projectPages,active,waiting,threadIds,collaboration,executors,flashingProjects};
+    const floors = [{id:'project',y:PROJECT,name:t('项目'),project:true},{id:'work',y:WORK,name:t('无项目')}];
+    layout = {...activity,floors,roles,agents:[],rooms:[...rooms.values()],routes,availablePages,projectPages,hubY:PROJECT};
+  }
+
+  function buildSectionLayout(shown,activity) {
+    const {active,collaboration,executors,threadIds} = activity;
+    const definitions = new Map(state.sidebar.sections);
+    if (state.sidebar.hasProjects || state.visibleSections?.has(PROJECT_SECTION) ||
+        shown.some(thread => officeSection(thread)===PROJECT_SECTION)) definitions.set(PROJECT_SECTION,t('项目'));
+    for (const id of definitions.keys()) {
+      if (state.visibleSections && !state.visibleSections.has(id)) definitions.delete(id);
+    }
+    // A missing membership goes to the catch-all only when all sections are visible.
+    const sectionOf = thread => {
+      const id = officeSection(thread);
+      return id===PROJECT_SECTION || state.sidebar.sections.has(id) ? id : null;
+    };
+    if ((state.visibleSections?.has(null) ?? true) &&
+        (!definitions.size || state.visibleSections?.has(null) ||
+          shown.some(thread => sectionOf(thread)===null) ||
+          [collaboration?.coordinator_id,...executors.map(item => item.thread_id)].some(id => {
+            const thread = currentThread(id);
+            return thread && sectionOf(thread)===null;
+          }))) definitions.set(null,t('未分区'));
+    const floors = [...definitions].map(([id,name]) => ({
+      id,name,y:0,project:id!==null,count:0,priority:0,activity:0
+    }));
+    const bySection = new Map(floors.map(floor => [floor.id,floor]));
+    for (const thread of active) {
+      const floor = bySection.get(sectionOf(thread));
+      if (!floor) continue;
+      const agents = state.agents.get(thread.id) ?? [];
+      const waiting = thread.status==='waiting' || agents.some(agent => agent.status==='waiting');
+      const priority = waiting ? 2 : 1;
+      const latest = Math.max(Date.parse(thread.last_activity) || 0,...agents.map(agent => agent.activity));
+      // Keep similarly active floors stable while their logs continue to update.
+      const recent = Math.floor(latest/ACTIVITY_ORDER_INTERVAL);
+      if (priority>floor.priority || (priority===floor.priority && recent>floor.activity)) {
+        floor.priority = priority;
+        floor.activity = recent;
+      }
+    }
+    floors.sort((a,b) => b.priority-a.priority || b.activity-a.activity);
+    floors.forEach((floor,index) => { floor.y = (floors.length-1-index)*PROJECT; });
+    const occupied = new Map(floors.map(floor => [floor.id,new Set()]));
+    const members = new Map(floors.map(floor => [floor.id,[]]));
+    const pageByChat = new Map();
+    const shownById = new Map(shown.map(thread => [thread.id,thread]));
+    for (const [id,seat] of state.sectionSeats) {
+      const thread = shownById.get(id);
+      if (!thread || sectionOf(thread)!==seat.section || !occupied.has(seat.section)) state.sectionSeats.delete(id);
+      else occupied.get(seat.section).add(seat.index);
+    }
+    const hubFloor = bySection.get(sectionOf(currentThread(collaboration?.coordinator_id)));
+    const hubY = collaboration ? hubFloor?.y : undefined;
+    const roles = [];
+    for (const thread of shown) {
+      const section = sectionOf(thread);
+      const floor = bySection.get(section);
+      if (!floor) continue;
+      floor.count++;
+      if (thread.id===collaboration?.coordinator_id) {
+        const style = projectStyle(thread.project_id ?? section ?? thread.id);
+        roles.push({thread,x:0,y:floor.y,z:1.23,style,atHub:true});
+        continue;
+      }
+      if (!state.sectionSeats.has(thread.id)) {
+        const slots = occupied.get(section);
+        const index = firstVacancy(slots);
+        slots.add(index);
+        state.sectionSeats.set(thread.id,{section,index});
+      }
+      members.get(section).push(thread);
+    }
+    for (const id of state.sectionPages.keys()) {
+      if (!bySection.has(id)) state.sectionPages.delete(id);
+    }
+    for (const floor of floors) {
+      const ordered = members.get(floor.id).sort((a,b) => state.sectionSeats.get(a.id).index-state.sectionSeats.get(b.id).index);
+      floor.pages = Array.from({length:Math.ceil(ordered.length/SECTION_DESKS_PER_PAGE)},(_,index) => index);
+      ordered.forEach((thread,index) => pageByChat.set(thread.id,Math.floor(index/SECTION_DESKS_PER_PAGE)));
+      floor.page = Math.min(state.sectionPages.get(floor.id) ?? 0,floor.pages.at(-1) ?? 0);
+      state.sectionPages.set(floor.id,floor.page);
+      const start = floor.page*SECTION_DESKS_PER_PAGE;
+      roles.push(...sectionWorkstations(floor,ordered.slice(start,start+SECTION_DESKS_PER_PAGE)));
+    }
+    roles.sort((a,b) => b.y-a.y || a.x-b.x);
+    const routes = new Map();
+    for (const {thread_id,received} of executors) {
+      const role = roles.find(candidate => candidate.thread.id===thread_id);
+      const floor = bySection.get(sectionOf(currentThread(thread_id)));
+      if (hubY===undefined || !floor) continue;
+      if (role) routes.set(thread_id,{points:routeTo(role.x,role.y,hubY),received});
+      else if (!threadIds.has(thread_id)) routes.set(thread_id,{points:routeTo(0,floor.y,hubY),received});
+    }
+    layout = {...activity,sectionMode:true,floors,roles,agents:[],rooms:[],routes,hubY,pageByChat,
+      availablePages:{},projectPages:new Map()};
+  }
+
+  function sectionWorkstations(floor,threads) {
+    if (!threads.length) return [];
+    const weights = threads.map(thread => 2.6+Math.min(6,state.agents.get(thread.id)?.length ?? 0)*.85);
+    const totalWeight = weights.reduce((sum,weight) => sum+weight,0);
+    const spare = SECTION_FLOOR_WIDTH-threads.length*2.5;
+    let left = -SECTION_FLOOR_WIDTH/2;
+    return threads.map((thread,index) => {
+      const cell = 2.5+spare*weights[index]/totalWeight;
+      const x = left+cell/2;
+      left += cell;
+      const width = threads.length===1 && !state.agents.has(thread.id) ? ROOM_WIDTH : cell-.16;
+      return {thread,x,y:floor.y,z:-.20,width,style:projectStyle(thread.project_id ?? floor.id ?? thread.id)};
+    });
   }
 
   function projectedBounds(x,y,z,width,depth,height) {
@@ -1550,29 +1853,96 @@
 
   function arrangeAgentRobots() {
     layout.agents = [];
-    const budget = Math.min(10,Math.floor(view.width/64))-layout.roles.length;
+    if (layout.sectionMode) {
+      for (const floor of layout.floors) {
+        const roles = layout.roles.filter(role => role.y===floor.y);
+        arrangeSectionAgents(roles,floor.y===layout.hubY);
+        if (roles.some(role => role.atHub && state.agents.has(role.thread.id))) {
+          arrangeFloorAgents(roles,floor.y,true);
+        }
+      }
+    } else arrangeFloorAgents(layout.roles);
+    agentSides = new Map(layout.agents.map(({thread,slot}) => [thread.id,slot]));
+  }
+
+  function sectionAgentSlots(parent,scale) {
+    const half = parent.width/2-.70*AGENT_SIZE*scale;
+    const sideStep = 1.08*scale;
+    const firstSide = .67*SECTION_DESK_SCALE+.69*AGENT_SIZE*scale;
+    const slots = [];
+    // Use the open sides at full size, then fill the row behind the main desk.
+    for (let distance=firstSide; distance<=half; distance+=sideStep) {
+      slots.push({x:parent.x+distance,z:parent.z},{x:parent.x-distance,z:parent.z});
+    }
+    const rearCount = 1+Math.floor(2*half/sideStep);
+    for (let index=0; index<rearCount; index++) {
+      const offset = (index-(rearCount-1)/2)*sideStep;
+      slots.push({x:parent.x+offset,z:-1.66});
+    }
+    return slots;
+  }
+
+  function arrangeSectionAgents(roles,hasHub) {
+    if (view.scale<18) return;
+    const teams = roles.filter(role => !role.atHub && state.agents.has(role.thread.id)).map(parent => {
+      const threads = state.agents.get(parent.thread.id);
+      const placements = SECTION_HELPER_SCALES.map(scale => ({scale,slots:sectionAgentSlots(parent,scale)}));
+      const capacity = Math.min(threads.length,Math.max(...placements.map(({slots}) => slots.length)));
+      return {parent,threads,placements,capacity};
+    });
+    let budget = SECTION_MAX_HELPERS-roles.length-Number(hasHub && !roles.some(role => role.atHub));
+    // Allocate a first seat to every team before a larger team takes the remaining seats.
+    for (let index=0; budget>0 && teams.some(team => index<team.capacity); index++) {
+      for (const team of teams) {
+        if (index>=team.capacity) continue;
+        team.count = index+1;
+        if (--budget===0) break;
+      }
+    }
+    for (const {parent,threads,placements,count=0} of teams) {
+      if (!count) continue;
+      const {scale,slots} = placements.find(({slots}) => slots.length>=count);
+      for (const [index,{x,z}] of slots.slice(0,count).entries()) {
+        layout.agents.push({thread:threads[index],parent,side:x<parent.x ? -1 : 1,slot:index,x,y:parent.y,z,scale});
+      }
+    }
+  }
+
+  function arrangeFloorAgents(roles,y,hubOnly=false) {
+    const existing = hubOnly ? layout.agents.filter(role => role.y===y) : [];
+    const budget = Math.min(10,Math.floor(view.width/64))-roles.length-existing.length;
     if (view.scale<28 || budget<=0) return;
-    const occupied = layout.roles.map(({x,y,z}) => projectedBounds(x,y,z+0.23,1.20,1.22,1.18));
-    if (layout.collaboration) occupied.push(projectedBounds(0,PROJECT,1.60,1.84,1.43,1.22));
-    if (layout.roles.every(role => role.y!==WORK || role.x<2.9)) {
+    const occupied = [...roles,...existing].map(role => {
+      const {x,y,z} = role;
+      const scale = workstationScale(role)*(role.parent ? AGENT_SIZE : 1);
+      return projectedBounds(x,y,z+.23*scale,1.20*scale,1.22*scale,1.18*scale);
+    });
+    if (layout.collaboration && (y===undefined || y===layout.hubY)) {
+      occupied.push(projectedBounds(0,layout.hubY,1.60,1.84,1.43,1.22));
+    }
+    if (!layout.sectionMode && layout.roles.every(role => role.y!==WORK || role.x<2.9)) {
       occupied.push(projectedBounds(3.62,WORK,0,3.75,3.1,.92));
     }
-    const teams = layout.roles.filter(role => state.agents.has(role.thread.id))
+    const teams = roles.filter(role => (!hubOnly || role.atHub) && state.agents.has(role.thread.id))
       .sort((a,b) => b.y-a.y || a.x-b.x);
-    const nextSides = new Map();
+    const limit = layout.agents.length+budget;
     // Give each team a nearby spot before attempting its second robot.
-    for (let index=0; index<2 && layout.agents.length<budget; index++) {
+    for (let index=0; index<2 && layout.agents.length<limit; index++) {
       for (const parent of teams) {
         const team = state.agents.get(parent.thread.id);
         const thread = team[index];
         if (!thread) continue;
-        const siblingSide = index===0 ? agentSides.get(team[1]?.id) : undefined;
-        const preferred = agentSides.get(thread.id) ?? (siblingSide ? -siblingSide : parent.x<=0 ? 1 : -1);
-        for (const side of [preferred,-preferred]) {
+        const siblingSlot = index===0 ? agentSides.get(team[1]?.id) : undefined;
+        const preferred = siblingSlot ? -Math.sign(siblingSlot) : parent.x<=0 ? 1 : -1;
+        const slots = [preferred,-preferred];
+        const previous = slots.indexOf(agentSides.get(thread.id));
+        if (previous>0) slots.unshift(...slots.splice(previous,1));
+        for (const slot of slots) {
+          const side = slot;
           const {y,z} = parent;
           const x = parent.x+side*1.42;
           // An empty neighboring project area isn't part of this team's workspace.
-          if (parent.seat.project && !parent.atHub) {
+          if (parent.seat?.project && !parent.atHub) {
             const roomX = ROOM_X[parent.seat.room % PROJECT_ROOMS];
             if (Math.abs(x-roomX)+.60*AGENT_SIZE>ROOM_WIDTH/2) continue;
           }
@@ -1581,14 +1951,12 @@
           if (Math.abs(x)+.60*AGENT_SIZE>6.56 || left<8 || top<8 || right>view.width-8 || bottom>view.height-8) continue;
           if (occupied.some(([l,t,r,b]) => left<r+2 && right>l-2 && top<b+2 && bottom>t-2)) continue;
           occupied.push([left,top,right,bottom]);
-          layout.agents.push({thread,parent,side,x,y,z});
-          nextSides.set(thread.id,side);
+          layout.agents.push({thread,parent,side,slot,x,y,z});
           break;
         }
-        if (layout.agents.length>=budget) break;
+        if (layout.agents.length>=limit) break;
       }
     }
-    agentSides = nextSides;
   }
 
   function drawRoute(model, points, color) {
@@ -1604,17 +1972,31 @@
     model.disk(x,y+0.089,z,0.080,0.018,color==='good'?'good':'amber');
   }
 
+  function workstationScale(role) {
+    return role.parent ? role.scale ?? 1 : layout.sectionMode && !role.atHub ? SECTION_DESK_SCALE : 1;
+  }
+
   function updateGeometry() {
+    const helpers = new Map();
+    if (layout.sectionMode) {
+      for (const {parent,z,scale} of layout.agents) {
+        if (!helpers.has(parent)) helpers.set(parent,[]);
+        helpers.get(parent).push({z,scale});
+      }
+    }
     const key = JSON.stringify([
-      layout.roles.map(role => [role.thread.id,role.seat,role.style,role.atHub]),
+      layout.sectionMode,layout.hubY,layout.floors.map(({y,id}) => [y,id]),
+      layout.roles.map(role => [role.thread.id,role.x,role.y,role.z,role.width,role.style,role.atHub,role.thread.project_id]),
+      [...helpers].map(([role,agents]) => [role.thread.id,agents]),
       layout.rooms,
-      [...layout.routes],
-      Boolean(layout.collaboration)
+      [...layout.routes]
     ]);
     if (geometry.key===key) return;
     if (geometry.office) renderer?.release(geometry.office);
+    for (const model of geometry.desks.values()) renderer?.release(model);
     for (const highlight of geometry.highlights.values()) renderer?.release(highlight);
     const office = mesh();
+    const desks = new Map();
     const highlights = new Map();
     for (const room of layout.rooms) {
       office.box(room.x,PROJECT+0.051,-0.56,ROOM_WIDTH,0.047,2.60,rugs[room.style],0.14);
@@ -1623,14 +2005,31 @@
       highlights.set(room.room,highlight);
     }
     const work = layout.roles.filter(role => role.y===WORK);
-    if (work.every(role => role.x<2.9)) office.vertices.push(...lounge.vertices);
+    if (!layout.sectionMode && work.every(role => role.x<2.9)) office.vertices.push(...lounge.vertices);
     for (const role of layout.roles) {
       if (role.atHub) continue;
-      if (role.y===WORK) office.box(role.x,WORK+0.051,-0.11,1.60,0.048,2.85,rugs[role.style],0.14);
-      desk(office,role.x,role.y,role.z,outfits[role.style]);
+      if (!desks.has(role.y)) desks.set(role.y,mesh());
+      const model = desks.get(role.y);
+      const width = role.width ?? 1.60;
+      let back = layout.sectionMode ? -1.66 : -1.535;
+      const front = layout.sectionMode ? 1.44 : 1.315;
+      for (const {z,scale} of helpers.get(role) ?? []) {
+        back = Math.min(back,z-.55*AGENT_SIZE*scale);
+      }
+      const rugCenter = (back+front)/2;
+      const depth = front-back;
+      if (layout.sectionMode || role.y===WORK) {
+        model.box(role.x,role.y+0.051,rugCenter,width,0.048,depth,rugs[role.style],0.14);
+      }
+      desk(model,role.x,role.y,role.z,outfits[role.style],workstationScale(role));
+      if (layout.sectionMode && role.thread.project_id) {
+        const highlight = mesh();
+        highlight.box(role.x,role.y+0.055,rugCenter,width,0.048,depth,'editGlow',0.14);
+        highlights.set(role.thread.id,highlight);
+      }
     }
     for (const {points,received} of layout.routes.values()) drawRoute(office,points,received?'good':'route');
-    geometry = {key,office,highlights};
+    geometry = {key,office,desks,highlights};
   }
 
   function robotParts(role, frame, lift) {
@@ -1638,17 +2037,18 @@
     const headset = role.atHub===true;
     const waiting = role.thread.status==='waiting';
     const color = helper ? 'teal' : hasActiveTurn(role.thread) ? outfits[role.style] : 'finished';
-    const key = helper ? 'agent' : color + (headset?'-headset':'');
-    if (!avatars.has(key)) avatars.set(key,seatedRobot(color,headset,helper || !renderer,helper));
+    const scale = workstationScale(role);
+    const key = helper ? 'agent:'+scale : [color,headset,scale].join(':');
+    if (!avatars.has(key)) avatars.set(key,seatedRobot(color,headset,helper || !renderer,helper,scale));
     const rig=avatars.get(key);
     const motion=frame!==null && role.thread.status==='running';
     const step=motion ? frame+projectStyle(role.thread.id)*5 : 0;
     const pose=step%keyboardPoses.length;
     const angle=motion ? Math.sin(pose*Math.PI/3)*0.055 : 0;
     const blink=motion && step%(renderer?29:17)===0;
-    const offset=[role.x,role.y+0.075*(helper ? AGENT_SIZE : 1),role.z];
+    const offset=[role.x,role.y+0.075*scale*(helper ? AGENT_SIZE : 1),role.z];
     const raised=1-(1-lift)**3;
-    const headOffset=add(add(offset,rig.neck),[0,raised*0.045-Math.abs(angle)*0.48,0]);
+    const headOffset=add(add(offset,rig.neck),[0,(raised*0.045-Math.abs(angle)*0.48)*scale,0]);
     const tilt=-0.42*raised;
     return [
       {model:rig.body,offset},
@@ -1666,13 +2066,15 @@
   function paint() {
     if (!view || !state.visible || showingUsage || !geometry.office) return;
     const now = performance.now();
-    const lifts = layout.roles.map(role => {
+    const roles = layout.roles.filter(role => visibleAt(role.y));
+    const agents = layout.agents.filter(role => visibleAt(role.y));
+    const lifts = roles.map(role => {
       if (role.thread.status!=='waiting') return 0;
       const began = state.waitingSince.get(role.thread.id);
       return reduced.matches || began===undefined ? 1 : Math.min(1,(now-began)/WAIT_LIFT_MS);
     });
-    const lifting = layout.roles.some(({thread},index) => thread.status==='waiting' && lifts[index]<1);
-    const typing = !reduced.matches && [...layout.roles,...layout.agents].some(role => role.thread.status==='running');
+    const lifting = roles.some(({thread},index) => thread.status==='waiting' && lifts[index]<1);
+    const typing = !reduced.matches && [...roles,...agents].some(role => role.thread.status==='running');
     const interval = renderer ? 120 : 250;
     const frame = typing ? Math.floor(now/interval) : null;
     if ((typing || lifting) && !robotTimer) {
@@ -1682,20 +2084,34 @@
       },lifting ? (renderer ? 32 : 105) : interval);
     } else if (!typing && !lifting) stopRobotMotion();
     const key = JSON.stringify([
-      view.width,view.height,view.ratio,geometry.key,dark.matches,Boolean(renderer),
+      view.width,view.viewportWidth,view.viewportHeight,view.scale,view.floor,view.ratio,
+      scene.scrollLeft,scene.scrollTop,geometry.key,dark.matches,Boolean(renderer),
       layout.collaboration?.coordinator_id,[...layout.flashingProjects],
-      layout.roles.map(role => role.thread.status),layout.agents.map(({thread,x,y,z}) => [thread.id,thread.status,x,y,z]),frame,lifts
+      roles.map(role => role.thread.status),agents.map(({thread,x,y,z,scale}) => [thread.id,thread.status,x,y,z,scale]),frame,lifts
     ]);
     if (paintKey===key) return;
     paintKey = key;
-    const parts = [{model:building},{model:geometry.office}];
-    if (layout.collaboration) parts.push({model:hub});
+    const parts = [{model:geometry.office}];
+    for (const floor of layout.floors) {
+      if (!visibleAt(floor.y)) continue;
+      parts.push({model:floorModels[floor.project?1:0],offset:[0,floor.y,0]});
+      const desks = geometry.desks.get(floor.y);
+      if (desks) parts.push({model:desks});
+    }
+    if (layout.collaboration && layout.hubY!==undefined && visibleAt(layout.hubY)) {
+      parts.push({model:hub,offset:[0,layout.hubY-PROJECT,0]});
+    }
     for (const room of layout.rooms) {
       if (layout.flashingProjects.has(room.project)) parts.push({model:geometry.highlights.get(room.room)});
     }
-    for (const [index,role] of layout.roles.entries()) parts.push(...robotParts(role,frame,lifts[index]));
-    for (const role of layout.agents) {
-      parts.push({model:agentDesk,offset:[role.x,role.y,role.z]});
+    for (const [index,role] of roles.entries()) {
+      if (layout.sectionMode && layout.flashingProjects.has(role.thread.project_id) && geometry.highlights.has(role.thread.id)) {
+        parts.push({model:geometry.highlights.get(role.thread.id)});
+      }
+      parts.push(...robotParts(role,frame,lifts[index]));
+    }
+    for (const role of agents) {
+      parts.push({model:agentDesks.get(workstationScale(role)),offset:[role.x,role.y,role.z]});
       parts.push(...robotParts(role,frame,role.thread.status==='waiting'?1:0));
     }
     if (renderer) renderer.paint(parts);
@@ -1753,9 +2169,12 @@
   }
 
   function drawAgentLinks() {
-    const links = layout.agents.map(({thread,parent,side,x,y,z}) => {
-      const [fromX,fromY] = project([parent.x+side*.49,y+.57,parent.z+.64]);
-      const [toX,toY] = project([x-side*.30,y+.57*AGENT_SIZE,z+.64*AGENT_SIZE]);
+    const links = layout.agents.map(role => {
+      const {thread,parent,side,x,y,z} = role;
+      const scale = workstationScale(parent);
+      const helperScale = workstationScale(role);
+      const [fromX,fromY] = project([parent.x+side*.49*scale,y+.57*scale,parent.z+.64*scale]);
+      const [toX,toY] = project([x-side*.30*helperScale,y+.57*AGENT_SIZE*helperScale,z+.64*AGENT_SIZE*helperScale]);
       const dx = toX-fromX, dy = toY-fromY;
       const link = document.createElement('span');
       link.className = 'agent-link';
@@ -1771,30 +2190,191 @@
     agentLinks.replaceChildren(...links);
   }
 
+  function addFloorPager(floor) {
+    if (!floor.pages || floor.pages.length<=1) return;
+    const index = floor.pages.indexOf(floor.page);
+    const pager = marker((index+1)+'/'+floor.pages.length,'floor-page',[5.7,floor.y+0.12,1.95],85);
+    const controls = [-1,1].map(step => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = step<0 ? '‹' : '›';
+      button.setAttribute('aria-label',floor.name+' · '+t(step<0?'上一页分区工位':'下一页分区工位'));
+      button.disabled = floor.pages[index+step]===undefined;
+      button.addEventListener('click',() => {
+        state.sectionPages.set(floor.id,floor.pages[index+step]);
+        refresh();
+      });
+      return button;
+    });
+    pager.prepend(controls[0]);
+    pager.append(controls[1]);
+  }
+
+  function placeIdleFloor(id,y) {
+    let floor = idleFloors.get(id);
+    if (!floor) {
+      const node = document.createElement('span');
+      node.className = 'idle-floor';
+      node.dataset.floor = id;
+      const dots = [
+        [.20,.38,.17,.08], [.52,.69,-.14,-.12], [.78,.26,-.08,.15]
+      ].map(([x,y,vx,vy]) => ({x,y,vx,vy,node:document.createElement('i')}));
+      node.append(...dots.map(dot => dot.node));
+      idleFloorLayer.append(node);
+      floor = {node,dots};
+      idleFloors.set(id,floor);
+      idleFloorVisibility.observe(node);
+    }
+    const {node} = floor;
+    const corners = floorCorners(y);
+    const left = Math.min(...corners.map(([x]) => x));
+    const top = Math.min(...corners.map(([,y]) => y));
+    floor.width = Math.max(...corners.map(([x]) => x))-left;
+    floor.height = Math.max(...corners.map(([,y]) => y))-top;
+    floor.radius = Math.max(2.5,Math.min(7,view.scale*.105));
+    floor.edges = corners.map(([x,y],index) => {
+      const [nextX,nextY] = corners[(index+1)%corners.length];
+      const length = Math.hypot(nextX-x,nextY-y);
+      return {x:x-left,y:y-top,nx:(nextY-y)/length,ny:(x-nextX)/length};
+    });
+    node.style.left = left+'px';
+    node.style.top = top+'px';
+    node.style.width = floor.width+'px';
+    node.style.height = floor.height+'px';
+    node.style.setProperty('--dot-size',2*floor.radius+'px');
+    for (const dot of floor.dots) bounceAtFloorEdge(dot,floor);
+    drawIdleDots(floor);
+  }
+
+  function drawIdleDots({dots,width,height,radius}) {
+    for (const dot of dots) {
+      dot.node.style.transform = `translate(${dot.x*width-radius}px, ${dot.y*height-radius}px)`;
+    }
+  }
+
+  function flashIdleDot(dot) {
+    dot.flash?.cancel();
+    dot.flash = dot.node.animate([{opacity:1},{opacity:.66}],{duration:320,easing:'ease-out'});
+  }
+
+  function bounceAtFloorEdge(dot,{edges,width,height,radius}) {
+    let hit = false;
+    for (const {x,y,nx,ny} of edges) {
+      const distance = (dot.x*width-x)*nx+(dot.y*height-y)*ny;
+      if (distance>=radius) continue;
+      dot.x += (radius-distance)*nx/width;
+      dot.y += (radius-distance)*ny/height;
+      const speed = dot.vx*width*nx+dot.vy*height*ny;
+      if (speed>=0) continue;
+      dot.vx -= 2*speed*nx/width;
+      dot.vy -= 2*speed*ny/height;
+      hit = true;
+    }
+    return hit;
+  }
+
+  function advanceIdleFloor(floor,dt) {
+    const {dots,width,height,radius} = floor;
+    const hit = new Set();
+    for (const dot of dots) {
+      dot.x += dot.vx*dt;
+      dot.y += dot.vy*dt;
+      if (bounceAtFloorEdge(dot,floor)) hit.add(dot);
+    }
+    for (const [i,a] of dots.entries()) {
+      for (let j=i+1; j<dots.length; j++) {
+        const b = dots[j];
+        const dx = (b.x-a.x)*width;
+        const dy = (b.y-a.y)*height;
+        const distance = Math.hypot(dx,dy);
+        if (distance>=2*radius) continue;
+        const nx = distance ? dx/distance : 1;
+        const ny = distance ? dy/distance : 0;
+        const correction = radius-distance/2;
+        a.x -= nx*correction/width;
+        a.y -= ny*correction/height;
+        b.x += nx*correction/width;
+        b.y += ny*correction/height;
+        const approach = (a.vx-b.vx)*width*nx+(a.vy-b.vy)*height*ny;
+        if (approach<=0) continue;
+        a.vx -= approach*nx/width;
+        a.vy -= approach*ny/height;
+        b.vx += approach*nx/width;
+        b.vy += approach*ny/height;
+        hit.add(a);
+        hit.add(b);
+      }
+    }
+    for (const dot of dots) {
+      if (bounceAtFloorEdge(dot,floor) || hit.has(dot)) flashIdleDot(dot);
+    }
+    drawIdleDots(floor);
+  }
+
+  function syncIdleMotion() {
+    if (!state.visible || showingUsage || reduced.matches || !visibleIdleFloors.size) {
+      clearTimeout(idleTimer);
+      idleTimer = lastIdleTick = 0;
+      for (const floor of visibleIdleFloors) {
+        for (const dot of floor.dots) dot.flash?.cancel();
+      }
+      return;
+    }
+    if (idleTimer) return;
+    idleTimer = setTimeout(() => {
+      idleTimer = 0;
+      const now = performance.now();
+      const dt = lastIdleTick ? Math.min(.05,(now-lastIdleTick)/1000) : 1/30;
+      lastIdleTick = now;
+      for (const floor of visibleIdleFloors) advanceIdleFloor(floor,dt);
+      syncIdleMotion();
+    },1000/30);
+  }
+
   function updateMarkers() {
     if (!view) return;
     const coordinator = currentThread(layout.collaboration?.coordinator_id);
     const key = JSON.stringify([
-      view.width,view.height,layout.collaboration?.coordinator_id,coordinator?.title,[...layout.flashingProjects],
+      view.width,view.height,view.scale,view.floor,layout.floors,layout.hubY,layout.sectionMode,
+      layout.collaboration?.coordinator_id,coordinator?.title,[...layout.flashingProjects],
       layout.roles.map(role => [
         role.thread.id,role.thread.title,role.thread.status,role.x,role.y,role.z,role.atHub,
-        state.agents.get(role.thread.id),state.badges.get(role.thread.id)
+        state.agents.get(role.thread.id)?.map(({id,status}) => [id,status]),state.badges.get(role.thread.id)
       ]),
-      layout.agents.map(({thread,parent,x,y,z}) => [thread.id,thread.status,parent.thread.id,x,y,z]),
+      layout.agents.map(({thread,parent,x,y,z,scale}) => [thread.id,thread.status,parent.thread.id,x,y,z,scale]),
       layout.rooms.map(room => [room.room,projectName(room.project)])
     ]);
     if (markersKey===key) {
       updateMarkerSelection();
+      updateFloorFocus();
       return;
     }
     markersKey = key;
     annotations.replaceChildren();
     drawAgentLinks();
     const displayedAgents = new Set(layout.agents.map(role => role.thread.id));
-    const projectFloor = marker(t('项目'),'floor',[-6.30,PROJECT+0.12,1.95],i18n.language==='en'?49:37);
-    projectFloor.dataset.floor = 'project';
-    const workFloor = marker(t('工作'),'floor',[-6.30,WORK+0.12,1.95],37);
-    workFloor.dataset.floor = 'work';
+    const idleIDs = new Set();
+    for (const floor of layout.floors) {
+      const {id,name,y,count} = floor;
+      const width = layout.sectionMode ? Math.max(58,Math.min(180,view.scale*3.25))
+        : (id==='work' ? (i18n.language==='en'?76:55) : (i18n.language==='en'?49:37));
+      const label = marker(name,'floor',[-6.30,y+0.12,1.95],width);
+      label.dataset.floor = layout.sectionMode && id===null ? 'unsectioned' : id;
+      addFloorPager(floor);
+      if (count===0 && !(layout.collaboration && y===layout.hubY) &&
+          ![...layout.routes.values()].some(route => route.points.at(-1)[1]===y)) {
+        idleIDs.add(label.dataset.floor);
+        placeIdleFloor(label.dataset.floor,y);
+      }
+    }
+    for (const [id,floor] of idleFloors) {
+      if (idleIDs.has(id)) continue;
+      idleFloorVisibility.unobserve(floor.node);
+      visibleIdleFloors.delete(floor);
+      floor.node.remove();
+      idleFloors.delete(id);
+    }
+    syncIdleMotion();
     for (const room of layout.rooms) {
       const node = marker(projectName(room.project),'project',[room.x,PROJECT+1.10,-1.82],view.scale*3.20);
       node.dataset.highlighted = String(layout.flashingProjects.has(room.project));
@@ -1814,6 +2394,7 @@
       if (compact?.length) addAgentTeam(node,compact,width);
       node.dataset.status = thread.status;
       node.dataset.threadId = thread.id;
+      if (layout.sectionMode) node.dataset.floor = layout.floors.find(floor => floor.y===y)?.id ?? 'unsectioned';
       const description = [label,waiting?t(statusLabels.waiting):'',agentTeamDescription(agents)].filter(Boolean).join(' · ');
       node.setAttribute('aria-label',description);
       node.setAttribute('aria-keyshortcuts','Meta+Enter');
@@ -1827,14 +2408,15 @@
         marker(t('已修改 {0}',projectName(badge)),'change',badgePoint,view.scale*1.61);
       }
     }
-    if (layout.collaboration && !layout.roles.some(role => role.atHub)) {
+    if (layout.collaboration && layout.hubY!==undefined && !layout.roles.some(role => role.atHub)) {
       const label = coordinator ? t('统筹 · {0}',chatTitle(coordinator)) : t('统筹桌');
-      const node = marker(label,'chat',[0,PROJECT+0.06,2.40],Math.max(63,view.scale*2.15),true);
+      const node = marker(label,'chat',[0,layout.hubY+0.06,2.40],Math.max(63,view.scale*2.15),true);
       node.addEventListener('click',openCollaboration);
       node.classList.add('hub-marker');
       node.title = label;
     }
     updateMarkerSelection();
+    updateFloorFocus();
   }
 
   function updateMarkerSelection() {
@@ -1882,6 +2464,9 @@
       heading.textContent = chatTitle(selected);
       subtitle.dataset.status = selected.status;
       const fields = [projectName(selected.project_id),t(statusLabels[selected.status]) || t('状态未知')];
+      const id = officeSection(selected);
+      const section = id===PROJECT_SECTION ? t('项目') : id===null ? t('未分区') : state.sidebar.sections.get(id);
+      if (section) fields.unshift(section);
       const agents = agentTeamDescription(state.agents.get(selected.id));
       if (agents) fields.push(agents);
       if (Number.isFinite(selected.token_total)) fields.push(t('{0} tokens（会话累计）',number(selected.token_total)));
@@ -1895,16 +2480,18 @@
       subtitle.textContent = fields.join(' · ');
     } else if (state.source==='unavailable') heading.textContent = t('等待聊天数据恢复');
     else if (state.visibleSections?.size===0) heading.textContent = t('未选择显示分区');
-    else if (state.visibleSections && !layout.active.length) heading.textContent = t('所选分区暂无可显示的活动聊天');
+    else if (layout.sectionMode && !layout.active.length) {
+      heading.textContent = t('所选分区暂无可显示的活动聊天');
+    }
     else heading.textContent = t('点击工位查看聊天');
     subtitle.title = subtitle.textContent;
     if (detail.textContent!==heading.textContent+subtitle.textContent) detail.replaceChildren(heading,subtitle);
     for (const control of pageControls) {
       const floor = control.dataset.floor;
-      const pages = layout.availablePages[floor];
+      const pages = layout.availablePages[floor] ?? [];
       const index = pages.indexOf(state.pages[floor]);
       control.hidden = pages.length<=1;
-      control.querySelector('span').textContent = (floor==='project'?t('项目'):t('工作'))+' '+(index+1)+'/'+pages.length;
+      control.querySelector('span').textContent = t(floor==='project'?'项目':'无项目')+' '+(index+1)+'/'+pages.length;
       control.querySelector('[data-step="-1"]').disabled = index<=0;
       control.querySelector('[data-step="1"]').disabled = index>=pages.length-1;
     }
@@ -1914,10 +2501,21 @@
 
   function selectChat(id) {
     if (!layout.threadIds.has(id)) return;
-    const seat = state.seats.get(id);
+    const seat = (layout.sectionMode ? state.sectionSeats : state.seats).get(id);
     state.selected = id;
-    if (id!==layout.collaboration?.coordinator_id) state.pages[seat.project?'project':'work'] = pageOf(seat);
+    if (seat && id!==layout.collaboration?.coordinator_id) {
+      if (layout.sectionMode) state.sectionPages.set(seat.section,layout.pageByChat.get(id) ?? 0);
+      else state.pages[seat.project?'project':'work'] = pageOf(seat);
+    }
     refresh();
+    const role = layout.roles.find(role => role.thread.id===id);
+    if (role && view) {
+      const [x,y] = project([role.x,role.y,role.z]);
+      const horizontal = x-scene.scrollLeft;
+      const vertical = y-scene.scrollTop;
+      if (vertical<24 || vertical>view.viewportHeight-24 ||
+          horizontal<24 || horizontal>view.viewportWidth-24) revealFloor(role.y,role.x,role.z);
+    }
   }
 
   function openChat(id) {
@@ -2202,7 +2800,15 @@
     for (const id of state.badges.keys()) {
       if (!shown.has(id)) state.badges.delete(id);
     }
+    const previousFloors = layout.sectionMode ? layout.floors : [];
+    const scrollTop = scene.scrollTop;
+    const anchor = view && scrollTop>0 && previousFloors.reduce((closest,floor) => {
+      const top = project([0,floor.y,0])[1];
+      return !closest || Math.abs(top-scrollTop)<Math.abs(closest.top-scrollTop) ? {id:floor.id,top} : closest;
+    },null);
     buildLayout();
+    renderOfficeSections();
+    stage.setAttribute('aria-label',t(layout.sectionMode?'Codex 分区楼层':'上层是项目工位，下层是无项目工位'));
     if (focusEdit) {
       const pages = layout.projectPages.get(focusEdit);
       if (pages?.size && !pages.has(state.pages.project)) {
@@ -2213,6 +2819,12 @@
     if (!layout.threadIds.has(state.selected)) state.selected = layout.roles[0]?.thread.id ?? null;
     updateControls();
     if (state.visible && !showingUsage) {
+      sizeScene();
+      if (anchor && layout.sectionMode &&
+          (previousFloors.length!==layout.floors.length || previousFloors.some((floor,index) => floor.id!==layout.floors[index].id))) {
+        const floor = layout.floors.find(floor => floor.id===anchor.id);
+        if (floor) scene.scrollTop = scrollTop+project([0,floor.y,0])[1]-anchor.top;
+      }
       if (view) arrangeAgentRobots();
       updateGeometry();
       updateMarkers();
@@ -2299,7 +2911,7 @@
     for (const thread of threads) {
       if (!thread?.id || roots.has(thread.id) || !roots.has(thread.root_id) || !hasActiveTurn(thread)) continue;
       if (!state.agents.has(thread.root_id)) state.agents.set(thread.root_id,[]);
-      state.agents.get(thread.root_id).push({id:thread.id,status:thread.status});
+      state.agents.get(thread.root_id).push({id:thread.id,status:thread.status,activity:Date.parse(thread.last_activity) || 0});
     }
     for (const agents of state.agents.values()) {
       agents.sort((a,b) => Number(b.status==='waiting')-Number(a.status==='waiting') || a.id.localeCompare(b.id));
@@ -2343,9 +2955,12 @@
   }
 
   function setVisible(visible) {
+    const opening = visible && !state.visible;
     state.visible = Boolean(visible);
     stage.dataset.visible = String(state.visible);
+    syncIdleMotion();
     if (!state.visible) {
+      saveGestureZoom();
       if (settingsDialog.open) flushSettingText();
       hideChatTitle();
       stopRobotMotion();
@@ -2360,23 +2975,55 @@
       if (dialog.open) dialog.close();
       return;
     }
+    if (opening && !showingUsage) {
+      state.selectedSection = undefined;
+      scene.scrollTop = 0;
+    }
     resize();
+    if (opening && !showingUsage && view) scene.scrollLeft = (view.width-view.viewportWidth)/2;
     refresh();
     if (showingUsage) renderUsagePlan();
   }
 
-  function resize() {
-    hideChatTitle();
-    const {width,height} = stage.getBoundingClientRect();
-    if (!width || !height) return;
-    const ratio = Math.min(2,devicePixelRatio||1,Math.sqrt(3000000/(width*height)));
-    const scale = Math.min((width-24)/13.85,(height-24)/8.88);
-    view = {width,height,ratio,scale,floor:height*0.5+scale*2.06};
+  function sizeScene() {
+    const viewportWidth = scene.clientWidth;
+    const viewportHeight = scene.clientHeight;
+    if (viewportWidth<=24 || viewportHeight<=24) return;
+    const ratio = Math.min(2,devicePixelRatio||1,Math.sqrt(3000000/(viewportWidth*viewportHeight)));
+    const levels = Math.max(0,layout.floors.length-1);
+    const zoom = officeZoom/100;
+    const standardHeight = layout.sectionMode && nativeToolbar
+      ? Math.max(25,window.officePreferredSceneHeight-(innerHeight-scene.offsetHeight))
+      : scene.offsetHeight;
+    // Keep the original two-floor scale as the panel grows and give extra floors scrollable space.
+    const fitWidth = zoom>1 ? scene.offsetWidth : viewportWidth;
+    const scale = zoom*Math.min((fitWidth-24)/13.85,(standardHeight-24)/TWO_FLOOR_VIEW);
+    const width = zoom>1 ? Math.max(viewportWidth,Math.ceil(24+13.85*scale-0.01)) : viewportWidth;
+    const floorSpacing = FLOOR_PITCH*scale;
+    const sceneUnits = TWO_FLOOR_VIEW+(levels-1)*FLOOR_PITCH;
+    const height = layout.floors.length
+      ? Math.max(viewportHeight,Math.ceil(24+sceneUnits*scale-0.01)) : viewportHeight;
+    const floor = height*0.5+(levels ? (layout.sectionMode ? levels*floorSpacing/2 : scale*2.06) : 0);
+    view = {width,height,viewportWidth,viewportHeight,ratio,scale,floor};
+    if (stage.style.width!==width+'px') stage.style.width = width+'px';
+    if (stage.style.height!==height+'px') stage.style.height = height+'px';
     for (const target of [canvas,fallback]) {
-      const w = Math.round(width*ratio);
-      const h = Math.round(height*ratio);
+      const w = Math.round(viewportWidth*ratio);
+      const h = Math.round(viewportHeight*ratio);
+      if (target.style.width!==viewportWidth+'px') target.style.width = viewportWidth+'px';
+      if (target.style.height!==viewportHeight+'px') target.style.height = viewportHeight+'px';
       if (target.width!==w) target.width = w;
       if (target.height!==h) target.height = h;
+    }
+  }
+
+  function resize(zoomAnchor) {
+    hideChatTitle();
+    sizeScene();
+    if (!view) return;
+    if (zoomAnchor) {
+      scene.scrollLeft = view.width/2+zoomAnchor.x*view.scale-zoomAnchor.left;
+      if (zoomAnchor.y!==null) scene.scrollTop = view.floor+zoomAnchor.y*view.scale-zoomAnchor.top;
     }
     if (state.visible && !showingUsage) {
       arrangeAgentRobots();
@@ -2386,6 +3033,78 @@
     }
   }
 
+  function updateZoomControls() {
+    zoomOut.disabled = officeZoom<=MIN_ZOOM;
+    zoomIn.disabled = officeZoom>=MAX_ZOOM;
+    zoomReset.disabled = officeZoom===DEFAULT_ZOOM;
+    stage.style.setProperty('--label-scale',Math.min(1.35,Math.max(.85,officeZoom/100)));
+  }
+
+  function setOfficeZoom(percent,event) {
+    if (officeZoom===percent) return;
+    const bounds = event && scene.getBoundingClientRect();
+    const left = bounds ? event.clientX-bounds.left : view?.viewportWidth/2;
+    const top = bounds ? event.clientY-bounds.top : view?.viewportHeight/2;
+    const anchor = view && {
+      left,top,
+      x:(scene.scrollLeft+left-view.width/2)/view.scale,
+      y:event || scene.scrollTop>0 ? (scene.scrollTop+top-view.floor)/view.scale : null
+    };
+    officeZoom = percent;
+    updateZoomControls();
+    resize(anchor);
+  }
+
+  for (const [button,step] of [[zoomOut,-ZOOM_STEP],[zoomIn,ZOOM_STEP],[zoomReset,0]]) {
+    button.addEventListener('click',() => {
+      saveGestureZoom();
+      const percent = step ? Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,officeZoom+step)) : DEFAULT_ZOOM;
+      setOfficeZoom(percent);
+      queueSetting('office_zoom',percent);
+    });
+  }
+
+  function saveGestureZoom() {
+    clearTimeout(gestureSaveTimer);
+    gestureSaveTimer = 0;
+    if (gestureZoom!==undefined) queueSetting('office_zoom',officeZoom);
+    gestureZoom = gestureScale = undefined;
+  }
+
+  function zoomWithGesture(percent,event) {
+    gestureZoom = Math.max(MIN_ZOOM,Math.min(MAX_ZOOM,percent));
+    setOfficeZoom(Math.round(gestureZoom),event);
+    if (gestureScale===undefined) {
+      clearTimeout(gestureSaveTimer);
+      gestureSaveTimer = setTimeout(saveGestureZoom,180);
+    }
+  }
+
+  scene.addEventListener('wheel',event => {
+    if (!(event.ctrlKey || event.metaKey) || !event.deltaY) return;
+    event.preventDefault();
+    if (gestureScale!==undefined) return;
+    const unit = event.deltaMode===1 ? 16 : event.deltaMode===2 ? scene.clientHeight : 1;
+    const distance = Math.max(-120,Math.min(120,event.deltaY*unit));
+    zoomWithGesture((gestureZoom ?? officeZoom)*Math.exp(-distance*.004),event);
+  },{passive:false});
+  scene.addEventListener('gesturestart',event => {
+    event.preventDefault();
+    saveGestureZoom();
+    gestureScale = officeZoom;
+  },{passive:false});
+  scene.addEventListener('gesturechange',event => {
+    event.preventDefault();
+    if (gestureScale!==undefined && Number.isFinite(event.scale) && event.scale>0) {
+      zoomWithGesture(gestureScale*event.scale,event);
+    }
+  },{passive:false});
+  for (const type of ['gestureend','gesturecancel']) {
+    scene.addEventListener(type,event => {
+      event.preventDefault();
+      saveGestureZoom();
+    },{passive:false});
+  }
   function recolor() {
     palette = names.map(name => rgb(colors[name][dark.matches?1:0]));
     renderer?.setPalette();
@@ -2576,7 +3295,7 @@
   function renderSectionSettings() {
     if (!settingsBaseline) return;
     const {available,sections} = state.sidebar;
-    const options = new Map([...sections,[null,t('未分区')]]);
+    const options = new Map([...sections,[PROJECT_SECTION,t('项目')],[null,t('未分区')]]);
     const saved = new Set([...(settingsBaseline.visible_sections ?? []),...draftSections]);
     for (const id of saved) {
       if (!options.has(id)) options.set(id,t('已保存的分区 · …{0}',id.slice(-8)));
@@ -2588,7 +3307,7 @@
       const rows = [...options].map(([id,name]) => {
         const row = document.createElement('label');
         row.className = 'section-option';
-        if (!sections.has(id) && id!==null) row.title = id;
+        if (!sections.has(id) && id!==PROJECT_SECTION && id!==null) row.title = id;
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.addEventListener('change', () => {
@@ -2709,6 +3428,7 @@
         language: languages.has(office.language) ? office.language : 'zh-CN',
         menu_bar_metric: menuBarMetrics.has(office.menu_bar_metric) ? office.menu_bar_metric : 'token_speed',
         live_quota: office.live_quota === true,
+        office_zoom: office.office_zoom ?? DEFAULT_ZOOM,
         coordination_section: office.coordination_section ?? null,
         projects: office.projects ?? {},
         thread_projects: office.thread_projects ?? {},
@@ -2726,6 +3446,9 @@
         draftSections = new Set(settingsBaseline.visible_sections ?? []);
       }
       if (saved) settingsSaved = true;
+      if (gestureZoom===undefined && !pendingSettings.has('office_zoom') && !failedSettings.has('office_zoom')) {
+        setOfficeZoom(settingsBaseline.office_zoom);
+      }
       renderSectionSettings();
       setVisibleSections(settingsBaseline.visible_sections);
       refresh();
@@ -2769,11 +3492,11 @@
   }
 
   function queueSetting(key,value) {
-    if (!settingsBaseline) return;
     failedSettings.delete(key);
     invalidSettings.delete(key);
     pendingSettings.set(key,value);
-    sendNextSetting();
+    if (settingsBaseline) sendNextSetting();
+    else loadOfficeSettings();
   }
 
   function applyVisibleSectionSetting() {
@@ -2939,6 +3662,7 @@
       view:showingUsage?'usage':'office',
       source:source.textContent,
       sourceStatus:source.dataset.status,
+      floorCount:layout.sectionMode ? Math.min(layout.floors.length,MAX_VISIBLE_FLOORS) : 0,
       runningCount:source.dataset.running==='true' ? layout.active.length-layout.waiting.length : 0,
       waitingCount:layout.waiting.length,
       collaborationTitle:collaborationButton.textContent
@@ -3317,7 +4041,7 @@
     clearTimeout(usageResetTimer);
     const now = Date.now();
     const windows = (usage?.quota_windows ?? [usage?.quota]).map(quota => ({
-      percent:quota?.remaining_percent, minutes:quota?.window_minutes,
+      percent:quota?.remaining_percent, minutes:quota?.window_minutes, source:quota?.source,
       reset:quota?.resets_at==null ? null : Date.parse(quota.resets_at),
       cycleStart:Date.parse(quota?.cycle_started_at), cycleStatus:quota?.cycle_status,
       cycleTokens:usageCount(quota?.cycle_tokens), cycleEstimate:usageCount(quota?.cycle_estimated_tokens),
@@ -3341,6 +4065,8 @@
     const time = Number.isFinite(sampled) ? usageResetTime.format(sampled) : '';
     const messages = {
       live: time ? t('实时账户额度 · {0}',time) : t('实时账户额度'),
+      mixed: time ? t('实时账户额度与本机记录 · {0}',time) : t('实时账户额度与本机记录'),
+      local_fallback: time ? t('实时额度暂无数据 · 本机记录 · {0}',time) : t('实时额度暂无数据 · 本机记录'),
       fallback: time ? t('实时查询失败 · 同一账户的本机记录 · {0}',time) : t('实时查询失败 · 同一账户的本机记录'),
       unavailable: t('实时额度不可用，暂无可确认属于当前账户的本机记录。'),
       loading: t('正在查询实时账户额度…'),
@@ -3348,7 +4074,7 @@
     };
     const sourceNote = messages[source] || (time ? t('本机额度记录 · {0}',time) : '');
     const accountNote = planLabel && source!=='unavailable'
-      ? t(source==='live' ? '当前额度来自 {0} 套餐。' : '最近本机额度记录来自 {0} 套餐。',planLabel) : '';
+      ? t(['live','mixed'].includes(source) ? '当前额度来自 {0} 套餐。' : '最近本机额度记录来自 {0} 套餐。',planLabel) : '';
     planNote.hidden = !(sourceNote || accountNote);
     usageText(planNote,[sourceNote,accountNote].filter(Boolean).join(' '));
     windows.sort((a,b) => a.minutes-b.minutes);
@@ -3395,10 +4121,11 @@
       return Infinity;
     }
     const {percent,minutes,reset} = window;
+    const live = window.source ? window.source==='live' : usage?.quota_source==='live';
     usageText(label,t(minutes===300 ? '5 小时额度剩余' : minutes===10080 ? '周额度剩余' : '套餐余量'));
     if (window.closed || window.awaiting) {
       usageText(amount,'—');
-      const noShortWindow = usage?.quota_source==='live' ? '账户未返回 5 小时额度。' : '本机尚未收到 5 小时额度记录。';
+      const noShortWindow = ['live','mixed'].includes(usage?.quota_source) ? '账户未返回 5 小时额度。' : '本机尚未收到 5 小时额度记录。';
       usageText(note,t(window.awaiting ? noShortWindow : '等待新周期额度记录'));
       return Infinity;
     }
@@ -3408,10 +4135,10 @@
     const period = minutes%1440===0 ? t('{0} 天',minutes/1440)
       : minutes%60===0 ? t('{0} 小时',minutes/60) : t('{0} 分钟',minutes);
     if (!Number.isFinite(reset)) {
-      usageText(note,t(usage?.quota_source==='live' ? '重置时间未知' : '本机记录 · 重置时间未知'));
+      usageText(note,t(live ? '重置时间未知' : '本机记录 · 重置时间未知'));
       return Infinity;
     }
-    const resetLabel = usage?.quota_source==='live' ? '{0}窗口 · {1} 重置' : '本机记录 · {0}窗口 · {1} 重置';
+    const resetLabel = live ? '{0}窗口 · {1} 重置' : '本机记录 · {0}窗口 · {1} 重置';
     usageText(note,t(resetLabel,period,usageResetTime.format(reset)));
     const minutesLeft = Math.ceil(remaining/60_000);
     const days = Math.floor(minutesLeft/1440);
@@ -3505,9 +4232,12 @@
 
   function showUsageView(visible) {
     if (showingUsage===visible) return;
+    if (visible) saveGestureZoom();
     closeOfficeDialogs();
     showingUsage = visible;
+    syncIdleMotion();
     byId('office-view').hidden = visible;
+    zoomControls.hidden = visible;
     usagePanel.hidden = !visible;
     officeButton.setAttribute('aria-pressed',String(!visible));
     usageButton.setAttribute('aria-pressed',String(visible));
@@ -3627,8 +4357,9 @@
     let closest = null;
     let distance = Infinity;
     for (const role of [...layout.roles,...layout.agents]) {
-      const reach = role.parent ? Math.max(8,view.scale*.39) : Math.max(12,view.scale*.50);
-      const [x,y] = project([role.x,role.y+0.73*(role.parent ? AGENT_SIZE : 1),role.z]);
+      const scale = workstationScale(role);
+      const reach = role.parent ? Math.max(8,view.scale*.39*scale) : Math.max(12,view.scale*.50*scale);
+      const [x,y] = project([role.x,role.y+0.73*scale*(role.parent ? AGENT_SIZE : 1),role.z]);
       const gap = Math.hypot(left-x,top-y);
       if (gap<Math.min(distance,reach)) {
         closest = role;
@@ -3709,7 +4440,7 @@
     const floor = control.dataset.floor;
     for (const button of control.querySelectorAll('button')) {
       button.addEventListener('click',() => {
-        const pages = layout.availablePages[floor];
+        const pages = layout.availablePages[floor] ?? [];
         const index = pages.indexOf(state.pages[floor])+Number(button.dataset.step);
         if (index<0 || index>=pages.length) return;
         state.pages[floor] = pages[index];
@@ -3728,7 +4459,12 @@
   canvas.addEventListener('webglcontextrestored',chooseRenderer);
   dark.addEventListener('change',recolor);
   reduced.addEventListener('change',paint);
-  new ResizeObserver(resize).observe(stage);
+  reduced.addEventListener('change',syncIdleMotion);
+  scene.addEventListener('scroll',() => {
+    hideChatTitle();
+    paint();
+  },{passive:true});
+  new ResizeObserver(() => resize()).observe(scene);
 
   window.officeSetSnapshot = updateSnapshot;
   window.officeSetVisible = setVisible;
@@ -3750,6 +4486,7 @@
     window.officeDropdowns?.refresh();
   };
   i18n.setLanguage(window.officeInitialLanguage);
+  updateZoomControls();
   configureUsageFormatters();
   chooseRenderer();
   refresh();

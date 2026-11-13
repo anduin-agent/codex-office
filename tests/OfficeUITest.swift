@@ -33,14 +33,33 @@ enum OfficeUITest {
                 try FileManager.default.createDirectory(at: project.appendingPathComponent(".git"),
                                                         withIntermediateDirectories: true)
                 let metadata = try JSONSerialization.data(withJSONObject: ["id": id, "cwd": project.path])
+                let model = index == 1 ? "gpt-5-mini" : "test-model-1"
                 let log = """
                 {"timestamp":"\(timestamp)","type":"session_meta","payload":\(String(decoding: metadata, as: UTF8.self))}
-                {"timestamp":"\(timestamp)","type":"turn_context","payload":{"model":"test-model-\(index + 1)"}}
-                {"timestamp":"\(timestamp)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":\(count)},"last_token_usage":{"total_tokens":\(count)}}}}
+                {"timestamp":"\(timestamp)","type":"turn_context","payload":{"model":"\(model)"}}
+                {"timestamp":"\(timestamp)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":\(count)},"last_token_usage":{"total_tokens":\(count),"input_tokens":\(count - 20),"output_tokens":20,"cached_input_tokens":0}}}}
 
                 """
                 try log.write(to: sessions.appendingPathComponent("usage-\(index).jsonl"), atomically: true, encoding: .utf8)
                 titles += "{\"id\":\"\(id)\",\"thread_name\":\"Usage chat \(index + 1)\"}\n"
+            }
+            let owner = "00000000-0000-0000-0000-000000000002"
+            for (index, kind, parent, count, title) in [
+                (3, "subagent", owner, 15, "Worker"),
+                (4, "guardian_review", owner, 10, "Linked review"),
+                (5, "guardian_review", "", 5, "Unlinked review"),
+            ] {
+                let id = "00000000-0000-0000-0000-00000000000\(index)"
+                var fields = ["id": id, "thread_source": kind, "model": "background-model"]
+                if !parent.isEmpty { fields["parent_thread_id"] = parent }
+                let metadata = try JSONSerialization.data(withJSONObject: fields)
+                let log = """
+                {"timestamp":"\(timestamp)","type":"session_meta","payload":\(String(decoding: metadata, as: UTF8.self))}
+                {"timestamp":"\(timestamp)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":\(count)},"last_token_usage":{"total_tokens":\(count)}}}}
+
+                """
+                try log.write(to: sessions.appendingPathComponent("usage-\(index).jsonl"), atomically: true, encoding: .utf8)
+                titles += "{\"id\":\"\(id)\",\"thread_name\":\"\(title)\"}\n"
             }
             try titles.write(to: home.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
             try writeProjectDirectories(to: home, workspace: workspace)
@@ -401,16 +420,19 @@ enum OfficeUITest {
                 date.setDate(date.getDate()-29+i);
                 const day = [date.getFullYear(),date.getMonth()+1,date.getDate()]
                     .map((part,index)=>String(part).padStart(index?2:4,'0')).join('-');
-                return {day,tokens:i===0?100:i===29?40:0,
-                    ...(i===0?{input_tokens:80,output_tokens:20,breakdown_tokens:100,
-                        cached_input_tokens:20,cache_reported_input_tokens:80}:{}),
+                return {day,tokens:i===0?130:i===29?40:0,
+                    ...(i===0?{input_tokens:100,output_tokens:30,breakdown_tokens:130,
+                        estimated_input_usd:0.75,priced_input_tokens:100,estimated_output_usd:0.50,priced_output_tokens:30,
+                        estimated_cached_input_usd:0.05,priced_cached_input_tokens:25,
+                        cached_input_tokens:25,cache_reported_input_tokens:100}:{}),
                     ...(i===29?{input_tokens:20,output_tokens:10,breakdown_tokens:30,
                         cached_input_tokens:10,cache_reported_input_tokens:10}:{}),
-                    estimated_usd:i===0?1.25:i===29?0.125:0,priced_tokens:i===0?100:i===29?20:0};
+                    estimated_usd:i===0?1.25:i===29?0.125:0,priced_tokens:i===0?130:i===29?20:0};
             });
             window.usageHistoryFixture = {
-                live_status:'ok',tokens_per_minute:12500,history_status:'ok',
-                history:{first_day:days[0].day,active_days:2,total_tokens:140,prices_updated_at:days[29].day,days},
+                live_status:'ok',tokens_per_minute:12500,live_estimated_usd:0.25,live_priced_tokens:10000,history_status:'ok',
+                history:{first_day:'2025-01-02',active_days:3,total_tokens:340,total_estimated_usd:2.50,
+                    total_priced_tokens:260,prices_updated_at:days[29].day,days},
                 quota:{window_minutes:10080,remaining_percent:42.5,
                     resets_at:new Date(Date.now()+((2*24+4)*60+17)*60000-15000).toISOString()}
             };
@@ -423,8 +445,8 @@ enum OfficeUITest {
                 const tip = document.querySelector('#usage-tooltip');
                 first.dispatchEvent(new PointerEvent('pointerenter',{pointerType:'mouse'}));
                 const correct = !tip.hidden && tip.textContent.includes(days[0].day) &&
-                    tip.textContent.includes('100 tokens') && tip.textContent.includes('$1.25') &&
-                    tip.textContent.includes('输入 80 · 输出 20') && tip.textContent.includes('缓存命中率 25%') &&
+                    tip.textContent.includes('130 tokens') && tip.textContent.includes('$1.25') &&
+                    tip.textContent.includes('输入 100 · 输出 30') && tip.textContent.includes('缓存命中率 25%') &&
                     last.getAttribute('aria-pressed')==='true';
                 first.dispatchEvent(new PointerEvent('pointerleave',{pointerType:'mouse'}));
                 last.dispatchEvent(new PointerEvent('pointerenter',{pointerType:'mouse'}));
@@ -437,8 +459,14 @@ enum OfficeUITest {
             """)
         try await expect("Usage shows the 30-day peak and qualifies partially reported daily metrics", panel, view, """
             document.querySelector('#usage-peak-date').textContent.length>0 &&
-            document.querySelector('#usage-peak').textContent==='100 tokens' &&
+            document.querySelector('#usage-peak').textContent==='130 tokens' &&
             document.querySelector('#usage-peak-cost').textContent.includes('$1.25') &&
+            document.querySelector('#usage-total').textContent==='340' &&
+            document.querySelector('#usage-total-cost').textContent.includes('$2.50') &&
+            document.querySelector('#usage-total-cost').title.includes('仅部分用量可估价') &&
+            document.querySelector('#usage-price-note').textContent.includes('不代表实际扣费') &&
+            document.querySelector('#usage-rate-cost').textContent.includes('$0.25') &&
+            !document.querySelector('#office-token-rate-cost').hidden &&
             document.querySelector('#usage-day-input').textContent==='20' &&
             document.querySelector('#usage-day-output').textContent==='10' &&
             document.querySelector('#usage-day-cache').textContent==='100%' &&
@@ -447,16 +475,47 @@ enum OfficeUITest {
         _ = try await view.evaluateJavaScript("document.querySelector('#usage-bars button').click()")
         try await expect("Clicking a date ranks local chats by that day's usage", panel, view, """
             (() => {
-                const rows = [...document.querySelectorAll('#usage-ranking li')];
+                const rows = [...document.querySelectorAll('#usage-ranking > li')];
                 return document.querySelector('#usage-ranking-title').textContent.startsWith(days[0].day) &&
-                    document.querySelector('#usage-day-input').textContent==='80' &&
-                    document.querySelector('#usage-day-output').textContent==='20' &&
+                    document.querySelector('#usage-day-input').textContent==='100' &&
+                    document.querySelector('#usage-day-output').textContent==='30' &&
                     document.querySelector('#usage-day-cache').textContent==='25%' &&
-                    document.querySelector('#usage-day-cache-count').textContent==='20 / 80 输入 Token' &&
+                    document.querySelector('#usage-day-cache-count').textContent==='25 / 100 输入 Token' &&
+                    document.querySelector('#usage-day-cost').textContent.includes('$1.25') &&
+                    document.querySelector('#usage-day-input-cost').textContent.includes('$0.75') &&
+                    document.querySelector('#usage-day-output-cost').textContent.includes('$0.50') &&
+                    document.querySelector('#usage-day-cache-cost').textContent.includes('$0.05') &&
                     document.querySelector('#usage-day-cache').parentElement.title==='' &&
-                    rows.length===2 && rows[0].textContent.includes('Usage chat 2') &&
-                    rows[0].textContent.includes('60 tokens') && rows[1].textContent.includes('40 tokens');
+                    rows.length===3 && rows[0].querySelector('summary').textContent.includes('85 tokens') &&
+                    rows[0].textContent.includes('Usage chat 2') && rows[0].textContent.includes('60 tokens') &&
+                    rows[0].querySelector('summary small').textContent.includes('$0.0001') &&
+                    rows[0].textContent.includes('Worker') && rows[0].textContent.includes('Linked review') &&
+                    rows[1].textContent.includes('40 tokens') && rows[2].textContent.includes('未归属的自动审批') &&
+                    rows[2].querySelector('summary').textContent.includes('5 tokens') &&
+                    [...document.querySelectorAll('#usage-ranking details')].every(group => group.open);
             })()
+            """)
+        _ = try await view.evaluateJavaScript("document.querySelector('#usage-ranking-toggle').click()")
+        try await expect("One click collapses every group", panel, view, """
+            !document.querySelector('#usage-ranking details[open]') &&
+            document.querySelector('#usage-ranking-toggle').textContent==='全部展开'
+            """)
+        _ = try await view.evaluateJavaScript("document.querySelector('#usage-ranking summary').click()")
+        try await expect("A single group can expand independently", panel, view, """
+            document.querySelectorAll('#usage-ranking details[open]').length===1 &&
+            document.querySelector('#usage-ranking details').open &&
+            document.querySelector('#usage-ranking-toggle').textContent==='全部收起'
+            """)
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#usage-ranking summary').click();
+            """)
+        try await expect("The same group can collapse independently", panel, view, """
+            !document.querySelector('#usage-ranking details[open]') &&
+            document.querySelector('#usage-ranking-toggle').textContent==='全部展开'
+            """)
+        _ = try await view.evaluateJavaScript("document.querySelector('#usage-ranking-toggle').click()")
+        try await expect("One click restores every daily group", panel, view, """
+            document.querySelectorAll('#usage-ranking details[open]').length===2
             """)
         _ = try await view.evaluateJavaScript("""
             window.officeSetUsage({...window.usageHistoryFixture,history_status:'loading',history:null});
@@ -472,13 +531,13 @@ enum OfficeUITest {
         _ = try await view.evaluateJavaScript("window.officeSetUsage(window.usageHistoryFixture)")
         try await expect("The completed index refreshes the ranking and clears the progress message", panel, view, """
             !document.querySelector('#usage-history').hidden && document.querySelector('#usage-history-status').hidden &&
-            document.querySelectorAll('#usage-ranking li').length===2
+            document.querySelectorAll('#usage-ranking > li').length===3
             """)
         try await expect("Today shows one measured bar and the weekly track shows remaining quota", panel, view, """
             (() => {
                 const today = document.querySelector('#usage-bars button:last-child');
                 const track = document.querySelector('#usage-plan-progress');
-                return today?.style.getPropertyValue('--bar-height')==='40%' &&
+                return Math.abs(parseFloat(today?.style.getPropertyValue('--bar-height'))-40/130*100)<0.01 &&
                     getComputedStyle(today).backgroundColor==='rgba(0, 0, 0, 0)' &&
                     !track.hidden && track.value===42.5 && track.max===100 &&
                     document.querySelector('#usage-plan-label').textContent==='周额度剩余' &&
@@ -502,8 +561,15 @@ enum OfficeUITest {
             """)
         _ = try await view.evaluateJavaScript("""
             window.officeSetUsage({quota_windows:[
-                {window_minutes:300,remaining_percent:73,resets_at:new Date(Date.now()+2500).toISOString()},
-                {window_minutes:10080,remaining_percent:34,resets_at:new Date(Date.now()+150000).toISOString()}
+                {window_minutes:300,remaining_percent:73,resets_at:new Date(Date.now()+2500).toISOString(),
+                    cycle_started_at:new Date(Date.now()-17997500).toISOString(),cycle_status:'ok',
+                    cycle_tokens:2700000,cycle_estimated_tokens:10000000,previous_cycle:{
+                        resets_at:new Date(Date.now()-17997500).toISOString(),sampled_at:new Date(Date.now()-18057500).toISOString(),
+                        cycle_status:'ok',cycle_tokens:3400000,used_percent:68,cycle_estimated_tokens:5000000,
+                        basis_sampled_at:new Date(Date.now()-18057500).toISOString(),basis_used_percent:68,basis_tokens:3400000
+                    },cycle_comparison:{status:'higher',change_percent:100,tolerance_percent:15}},
+                {window_minutes:10080,remaining_percent:34,resets_at:new Date(Date.now()+150000).toISOString(),
+                    cycle_started_at:new Date(Date.now()-604650000).toISOString(),cycle_status:'partial',cycle_tokens:33000000}
             ]});
             """)
         try await expect("Five-hour and weekly quota show in order with separate progress and resets", panel, view, """
@@ -513,13 +579,23 @@ enum OfficeUITest {
                     short.querySelector('.usage-plan-label').textContent==='5 小时额度剩余' &&
                     weekly.querySelector('.usage-plan-label').textContent==='周额度剩余' &&
                     short.querySelector('progress').value===73 && weekly.querySelector('progress').value===34 &&
+                    short.querySelector('.usage-plan-cycle').textContent.includes('2,700,000 tokens') &&
+                    short.querySelector('.usage-plan-cycle').textContent.includes('≈ 10M tokens') &&
+                    short.querySelector('.usage-plan-previous').textContent.includes('≈ 5M tokens') &&
+                    short.querySelector('.usage-plan-previous strong').title.includes('3,400,000 tokens ÷ 68%') &&
+                    short.querySelector('.usage-cycle-comparison').textContent==='可能增加 · 估算差 +100%' &&
+                    document.querySelector('#usage-comparison-note').textContent.includes('±15%') &&
+                    weekly.querySelector('.usage-plan-cycle').textContent.includes('本周期已记录 33,000,000 tokens') &&
+                    !weekly.querySelector('.usage-plan-cycle').textContent.includes('估算容量') &&
+                    !document.querySelector('#usage-cycle-note').hidden &&
                     short.querySelector('.usage-plan-countdown').textContent==='重置倒计时 1 分钟' &&
                     weekly.querySelector('.usage-plan-countdown').textContent==='重置倒计时 3 分钟';
             })()
             """)
         try await expect("The five-hour bar expires independently", panel, view, """
             document.querySelector('#usage-plan-label').textContent==='周额度剩余' &&
-            document.querySelector('#usage-plan-progress').value===34 && document.querySelector('#usage-plan-second-label').parentElement.hidden
+            document.querySelector('#usage-plan-progress').value===34 && document.querySelector('#usage-plan-second-label').parentElement.hidden &&
+            document.querySelector('#usage-cycle-note').hidden
             """)
         _ = try await view.evaluateJavaScript("""
             window.officeSetVisible(false);
@@ -530,6 +606,19 @@ enum OfficeUITest {
             document.querySelector('#usage-plan-progress').hidden &&
             document.querySelector('#usage-plan-countdown').hidden &&
             document.querySelector('#usage-plan-percent').textContent==='—'
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetUsage({quota_windows:[],quota_closed_windows:[{window_minutes:10080,previous_cycle:{
+                resets_at:new Date(Date.now()-60000).toISOString(),sampled_at:new Date(Date.now()-120000).toISOString(),
+                cycle_status:'ok',cycle_tokens:3400000,used_percent:68,cycle_estimated_tokens:5000000
+            }}]});
+            """)
+        try await expect("A closed weekly baseline stays visible while waiting for a new sample", panel, view, """
+            document.querySelector('#usage-plan-progress').hidden &&
+            document.querySelector('#usage-plan-note').textContent==='等待新周期额度记录' &&
+            !document.querySelector('.usage-plan-previous').hidden &&
+            document.querySelector('.usage-plan-previous').textContent.includes('≈ 5M tokens') &&
+            document.querySelector('#usage-comparison-note').hidden
             """)
     }
 
@@ -938,15 +1027,27 @@ enum OfficeUITest {
               window.styleMask.contains(.resizable), window.title == "Usage details" else {
             throw Failure("Usage did not open its own localized, resizable window")
         }
-        try await expect("Detailed usage reads both temporary Codex sessions", window, detail, """
-            document.querySelectorAll('#usage-session-list [data-session-id]').length===2
+        try await expect("Detailed usage shows the same groups and the once-counted total", window, detail, """
+            document.querySelectorAll('#usage-session-list > li').length===3 &&
+            document.querySelector('#usage-total-tokens').textContent==='130 tokens' &&
+            document.querySelector('#usage-total-cost').textContent.includes('$0.0001') &&
+            document.querySelectorAll('.session-group-toggle[aria-expanded=true]').length===2 &&
+            document.querySelector('#usage-session-list').textContent.includes('Unassigned automatic reviews')
+            """)
+        _ = try await detail.evaluateJavaScript("document.querySelector('#usage-toggle-groups').click()")
+        try await expect("Detailed usage collapses every group", window, detail, """
+            !document.querySelector('.session-group-toggle[aria-expanded=true]')
+            """)
+        _ = try await detail.evaluateJavaScript("document.querySelector('.session-group-toggle').click()")
+        try await expect("Detailed usage can open just one group", window, detail, """
+            document.querySelectorAll('.session-group-toggle[aria-expanded=true]').length===1
             """)
         _ = try await detail.evaluateJavaScript("""
             (() => {
                 const project = document.querySelector('#usage-project');
                 const model = document.querySelector('#usage-model');
                 project.value = [...project.options].find(option => option.textContent==='project-2').value;
-                model.value = [...model.options].find(option => option.textContent==='test-model-2').value;
+                model.value = [...model.options].find(option => option.textContent==='gpt-5-mini').value;
                 document.querySelector('#usage-apply').click();
             })()
             """)
@@ -960,7 +1061,8 @@ enum OfficeUITest {
         try await expect("Session drilldown shows filtered usage inside the detail window", window, detail, """
             !document.querySelector('#session-detail').hidden &&
             document.querySelector('#session-title').textContent==='Usage chat 2' &&
-            document.querySelector('#session-models').textContent.includes('test-model-2') &&
+            document.querySelector('#session-models').textContent.includes('gpt-5-mini') &&
+            document.querySelector('#session-cost').textContent.includes('$0.0001') &&
             document.querySelector('#session-tokens').textContent.includes('60')
             """)
         try button(.settings, in: panel).performClick(nil)

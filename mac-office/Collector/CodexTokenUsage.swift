@@ -9,12 +9,15 @@ final class CodexTokenUsage {
     private static let liveWindow: TimeInterval = 60
     private static let liveFileMargin: TimeInterval = 60
     private static let historyDays = 30
+    private static let quotaEstimateTolerance = 0.15
     private let home: URL
     private var files: [URL: UsageFile] = [:]
     private var failures: [URL: Failure] = [:]
     private var sessions: [String: UsageSummary] = [:]
+    private var rolloutThreads: [String: UsageFile] = [:]
     private var summaryTimeZone: TimeZone?
     private var historyDates: [String: Date] = [:]
+    private var latestPrices = OfficePrices.empty
     private var detailStatus = "loading"
     private var detailToday: Date?
 
@@ -23,6 +26,8 @@ final class CodexTokenUsage {
     }
 
     func scan(now: Date = Date(), budget: TimeInterval = 1.2, prices: OfficePrices = .empty) -> OfficeJSON {
+        latestPrices = prices
+        let costs = UsageCostCalculator(prices)
         let start = ProcessInfo.processInfo.systemUptime
         let deadline = start + budget
         let inventory = discoverLogs()
@@ -70,14 +75,20 @@ final class CodexTokenUsage {
         let cutoff = now.addingTimeInterval(-Self.liveWindow)
         let today = calendar.startOfDay(for: now)
         let firstChartDay = calendar.date(byAdding: .day, value: 1 - Self.historyDays, to: today) ?? today
-        var recent: [(id: String, tokens: Int)] = []
+        var recent: [UsageRankedSession] = []
         var history: [Date: Int] = [:]
         var breakdowns: [Date: UsageBreakdown] = [:]
         var estimates: [Date: UsageEstimate] = [:]
+        var historyEstimate = UsageEstimate()
+        var liveEstimate = UsageEstimate()
         var todayTokens = 0
         for (id, summary) in sessions {
             let count = summary.total(through: now) - summary.total(through: cutoff)
-            if count > 0 { recent.append((id, count)) }
+            if count > 0 {
+                let estimate = summary.liveEstimate(after: cutoff, through: now, costs: costs)
+                recent.append(UsageRankedSession(id: id, tokens: count, estimate: estimate))
+                liveEstimate.add(estimate)
+            }
             if pending.isEmpty {
                 for (day, tokens) in summary.days where day <= today {
                     history[day] = addingTokens(history[day, default: 0], tokens)
@@ -86,18 +97,14 @@ final class CodexTokenUsage {
                     breakdowns[day, default: UsageBreakdown()].add(breakdown)
                 }
             }
-            for (day, amounts) in summary.priceableDays
-            where day == today || (pending.isEmpty && day >= firstChartDay && day < today) {
-                for (key, tokens) in amounts {
-                    let context = key.longContext ? OfficePrices.longContextInputThreshold + 1 : 0
-                    guard let price = prices.price(model: key.model, inputTokens: context),
-                          let cost = tokens.cost(using: price) else { continue }
-                    estimates[day, default: UsageEstimate()].add(tokens: tokens.total, usd: cost)
-                }
+            for (day, amounts) in summary.priceableDays where day == today || (pending.isEmpty && day < today) {
+                let estimate = costs.estimate(amounts)
+                if day >= firstChartDay { estimates[day, default: UsageEstimate()].add(estimate) }
+                historyEstimate.add(estimate)
             }
             todayTokens = addingTokens(todayTokens, summary.days[today, default: 0])
         }
-        recent.sort { $0.tokens == $1.tokens ? $0.id < $1.id : $0.tokens > $1.tokens }
+        recent.sort(by: UsageRankedSession.rankedBefore)
 
         let liveCutoff = cutoff.addingTimeInterval(-Self.liveFileMargin)
         let liveStatus = status(inventory.foundRoot, pending: pending.contains { $0.modified >= liveCutoff },
@@ -110,9 +117,9 @@ final class CodexTokenUsage {
         detailToday = today
         historyDates.removeAll(keepingCapacity: true)
         let historyValue: OfficeJSON? = hasCounts(historyStatus)
-            ? historyPayload(history, breakdowns: breakdowns, estimates: estimates,
+            ? historyPayload(history, breakdowns: breakdowns, estimates: estimates, totalEstimate: historyEstimate,
                              priceDate: prices.updatedAt, today: today, calendar: calendar) : nil
-        let windows = quotaWindows(at: now)
+        let quota = quotaWindows(at: now, pending: pending, failed: failed, inventoryErrors: inventory.hadErrors)
         var snapshot: OfficeJSON = [
             "live_status": liveStatus,
             "history_status": historyStatus,
@@ -120,29 +127,32 @@ final class CodexTokenUsage {
             "tokens_per_minute": hasCounts(liveStatus) ? recent.map(\.tokens).reduce(0, addingTokens) as Any : NSNull(),
             "today_status": todayStatus,
             "today_tokens": hasCounts(todayStatus) ? todayTokens as Any : NSNull(),
-            "quota": windows.first as Any? ?? NSNull(),
-            "quota_windows": Array(windows.reversed()),
-            "recent": hasCounts(liveStatus) ? recent.prefix(8).map { ["id": $0.id, "tokens": $0.tokens] } : [],
+            "quota": quota.active.first as Any? ?? NSNull(),
+            "quota_windows": Array(quota.active.reversed()),
+            "quota_closed_windows": quota.closed,
+            "recent": hasCounts(liveStatus) ? recent.prefix(8).map { session -> OfficeJSON in
+                var row: OfficeJSON = ["id": session.id, "tokens": session.tokens]
+                session.estimate.write(to: &row)
+                return row
+            } : [],
             "history": historyValue as Any? ?? NSNull(),
         ]
-        if hasCounts(todayStatus), let estimate = estimates[today] {
-            snapshot["today_estimated_usd"] = estimate.usd
-            snapshot["today_priced_tokens"] = estimate.tokens
-        }
+        if hasCounts(todayStatus) { estimates[today]?.write(to: &snapshot, prefix: "today_") }
+        if hasCounts(liveStatus) { liveEstimate.write(to: &snapshot, prefix: "live_") }
         return snapshot
     }
 
     func dayDetails(_ day: String, language: OfficeLanguage = .simplifiedChinese) -> OfficeJSON {
         guard let date = historyDates[day] else { return ["day": day, "sessions": [], "total_sessions": 0] }
-        let ranked = sessions.compactMap { id, summary -> (id: String, tokens: Int)? in
+        let costs = UsageCostCalculator(latestPrices)
+        let candidates = sessions.compactMap { id, summary -> UsageRankedSession? in
             guard let tokens = summary.days[date], tokens > 0 else { return nil }
-            return (id, tokens)
-        }.sorted { $0.tokens == $1.tokens ? $0.id < $1.id : $0.tokens > $1.tokens }
-        let top = ranked.prefix(100)
-        let names = activityNames(home: home, ids: Set(top.map(\.id)))
-        let rows: [OfficeJSON] = top.map { id, tokens in
-            ["id": id, "title": activityChatLabel(names[id] ?? [:], id: id, language: language), "tokens": tokens]
+            let estimate = summary.priceableDays[date].map(costs.estimate) ?? UsageEstimate()
+            return UsageRankedSession(id: id, tokens: tokens, estimate: estimate)
         }
+        let grouping = rankingRelations()
+        let ranked = groupUsage(candidates, by: grouping)
+        let rows = rankingPayload(Array(ranked.prefix(100)), grouping: grouping, language: language)
         return ["day": day, "sessions": rows, "total_sessions": ranked.count]
     }
 
@@ -167,7 +177,11 @@ final class CodexTokenUsage {
             }
             return models.isEmpty ? nil : (id, summary.workspace, models)
         }
-        activityProjects.discover(Set(candidates.compactMap(\.workspace)))
+        let grouping = rankingRelations()
+        let rootWorkspaces = candidates.compactMap { candidate in
+            grouping.root(for: candidate.id).flatMap { rolloutThreads[$0]?.workspace ?? sessions[$0]?.workspace }
+        }
+        activityProjects.discover(Set(candidates.compactMap(\.workspace) + rootWorkspaces))
         let knownProjects = Dictionary(uniqueKeysWithValues: activityProjects.rows().compactMap { project -> (String, String)? in
             guard let id = project["id"] as? String, let name = project["name"] as? String else { return nil }
             return (id, name)
@@ -177,12 +191,20 @@ final class CodexTokenUsage {
         let unknown = DetailedUsageFilters.unknown
         var projects: [String: String] = [:]
         var models: [String: String] = [:]
-        var ranked: [DetailedUsageSession] = []
+        var matching: [UsageRankedSession] = []
         var totalTokens = 0
+        var totalEstimate = UsageEstimate()
+        let costs = UsageCostCalculator(latestPrices)
+        func projectFor(_ id: String, workspace: String?) -> (String, String) {
+            detailedUsageProject(id: id, workspace: workspace, activityProjects: activityProjects,
+                                 knownProjects: knownProjects, temporary: temporary, fallback: unknownProject)
+        }
         for candidate in candidates {
-            let (project, title) = detailedUsageProject(id: candidate.id, workspace: candidate.workspace,
-                                                        activityProjects: activityProjects, knownProjects: knownProjects,
-                                                        temporary: temporary, fallback: unknownProject)
+            let id = candidate.id
+            var (project, title) = projectFor(id, workspace: candidate.workspace)
+            if project == unknown && !temporary.contains(id), let root = grouping.root(for: id), root != id {
+                (project, title) = projectFor(root, workspace: rolloutThreads[root]?.workspace ?? sessions[root]?.workspace)
+            }
             projects[project] = title
             for model in candidate.models.keys {
                 models[model] = model == unknown ? unknownModel : String(model.dropFirst("model:".count))
@@ -192,28 +214,110 @@ final class CodexTokenUsage {
             guard !includedModels.isEmpty else { continue }
             let tokens = includedModels.values.reduce(0, addingTokens)
             totalTokens = addingTokens(totalTokens, tokens)
-            ranked.append(DetailedUsageSession(id: candidate.id, project: title, models: includedModels, tokens: tokens))
-        }
-        ranked.sort { $0.tokens == $1.tokens ? $0.id < $1.id : $0.tokens > $1.tokens }
-        let page = ranked.dropFirst(filters.offset).prefix(100)
-        let names = activityNames(home: home, ids: Set(page.map(\.id)))
-        let rows: [OfficeJSON] = page.map { session in
-            let modelTotals = session.models.sorted {
-                $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value
+            var modelEstimates: [String: UsageEstimate] = [:]
+            var estimate = UsageEstimate()
+            for (day, amounts) in sessions[id]?.priceableDays ?? [:]
+            where day <= date && day >= filters.firstDay && day <= filters.lastDay {
+                for (key, breakdown) in amounts {
+                    let modelID = "model:" + key.model
+                    guard includedModels[modelID] != nil else { continue }
+                    let part = costs.estimate(key, breakdown)
+                    modelEstimates[modelID, default: UsageEstimate()].add(part)
+                    estimate.add(part)
+                }
             }
-            return [
-                "id": session.id,
-                "title": activityChatLabel(names[session.id] ?? [:], id: session.id, language: language),
-                "project": session.project,
-                "models": modelTotals.map { models[$0.key] ?? unknownModel },
-                "tokens": session.tokens,
-                "model_totals": modelTotals.map { ["title": models[$0.key] ?? unknownModel, "tokens": $0.value] as OfficeJSON }
-            ]
+            totalEstimate.add(estimate)
+            matching.append(UsageRankedSession(id: id, tokens: tokens, project: title, models: includedModels,
+                                              estimate: estimate, modelEstimates: modelEstimates))
         }
-        return [
+        let ranked = groupUsage(matching, by: grouping) { id in
+            projectFor(id, workspace: rolloutThreads[id]?.workspace ?? sessions[id]?.workspace).1
+        }
+        let page = Array(ranked.dropFirst(filters.offset).prefix(100))
+        let rows = rankingPayload(page, grouping: grouping, language: language, modelTitles: models)
+        var payload: OfficeJSON = [
             "status": detailStatus, "projects": detailedUsageOptions(projects), "models": detailedUsageOptions(models),
             "total_tokens": totalTokens, "total_sessions": ranked.count, "sessions": rows
         ]
+        totalEstimate.write(to: &payload)
+        return payload
+    }
+
+    private func rankingRelations() -> UsageRankingRelations {
+        let database = usageThreadRelations(home: home)
+        let relations = rolloutThreads.compactMapValues(\.relation).merging(database.relations) { $0.fillingMissingFields(from: $1) }
+        return UsageRankingRelations(knownIDs: database.ids.union(rolloutThreads.keys), relations: relations)
+    }
+
+    private func groupUsage(_ candidates: [UsageRankedSession], by grouping: UsageRankingRelations,
+                            projectFor: (String) -> String? = { _ in nil }) -> [UsageRankedGroup] {
+        let groups = Dictionary(grouping: candidates) { session in
+            grouping.root(for: session.id) ?? UsageRankedGroup.unassigned
+        }
+        return groups.map { id, sessions in
+            let own = sessions.first { $0.id == id }
+            if let own, sessions.count == 1 { return UsageRankedGroup(session: own, children: []) }
+            let children = sessions.filter { $0.id != id }.sorted(by: UsageRankedSession.rankedBefore)
+            var modelTotals: [String: Int] = [:]
+            var modelEstimates: [String: UsageEstimate] = [:]
+            var estimate = UsageEstimate()
+            for row in sessions {
+                estimate.add(row.estimate)
+                for (model, tokens) in row.models {
+                    modelTotals[model] = addingTokens(modelTotals[model, default: 0], tokens)
+                }
+                for (model, cost) in row.modelEstimates {
+                    modelEstimates[model, default: UsageEstimate()].add(cost)
+                }
+            }
+            let group = UsageRankedSession(id: id, tokens: sessions.reduce(0) { addingTokens($0, $1.tokens) },
+                                           project: projectFor(id) ?? own?.project, models: modelTotals,
+                                           estimate: estimate, modelEstimates: modelEstimates)
+            let root = id == UsageRankedGroup.unassigned ? [] :
+                [own ?? UsageRankedSession(id: id, tokens: 0, project: group.project)]
+            return UsageRankedGroup(session: group, children: root + children)
+        }.sorted { UsageRankedSession.rankedBefore($0.session, $1.session) }
+    }
+
+    private func rankingPayload(_ groups: [UsageRankedGroup], grouping: UsageRankingRelations,
+                                language: OfficeLanguage, modelTitles: [String: String]? = nil) -> [OfficeJSON] {
+        let ids = Set(groups.flatMap { [$0.session.id] + $0.children.map(\.id) }).subtracting([UsageRankedGroup.unassigned])
+        let names = activityNames(home: home, ids: ids)
+        func row(_ session: UsageRankedSession) -> OfficeJSON {
+            let id = session.id
+            var metadata = names[id] ?? [:]
+            metadata["thread_source"] = metadata["thread_source"] ?? grouping.relations[id]?.kind.rawValue
+            let title = id == UsageRankedGroup.unassigned
+                ? language.text("未归属的自动审批", "Unassigned automatic reviews")
+                : activityChatLabel(metadata, id: id, language: language)
+            var payload: OfficeJSON = ["id": id, "title": title, "tokens": session.tokens]
+            session.estimate.write(to: &payload)
+            if let project = session.project { payload["project"] = project }
+            if let modelTitles {
+                let totals = session.models.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+                payload["models"] = totals.compactMap { modelTitles[$0.key] }
+                payload["model_totals"] = totals.compactMap { key, tokens -> OfficeJSON? in
+                    guard let title = modelTitles[key] else { return nil }
+                    var row: OfficeJSON = ["title": title, "tokens": tokens]
+                    session.modelEstimates[key]?.write(to: &row)
+                    return row
+                }
+            }
+            return payload
+        }
+        return groups.map { group in
+            let id = group.session.id
+            var payload = row(group.session)
+            if id == UsageRankedGroup.unassigned { payload["kind"] = "unassigned_guardian" }
+            if !group.children.isEmpty {
+                payload["children"] = group.children.map { child in
+                    var details = row(child)
+                    details["kind"] = child.id == id ? "self" : grouping.relations[child.id]?.kind.rawValue ?? "subagent"
+                    return details
+                }
+            }
+            return payload
+        }
     }
 
     private func detailedUsageProject(id: String, workspace: String?, activityProjects: ActivityProjects,
@@ -276,8 +380,15 @@ final class CodexTokenUsage {
             summaryTimeZone = calendar.timeZone
         }
         var groups: [String: [UsageFile]] = [:]
+        rolloutThreads.removeAll(keepingCapacity: true)
         for (_, source) in files.sorted(by: { $0.key.path < $1.key.path }) {
-            if let identity = source.identity, !source.entries.isEmpty {
+            if let identity = source.identity {
+                if let previous = rolloutThreads[identity] {
+                    if source.hasMetadata && !previous.hasMetadata { rolloutThreads[identity] = source }
+                } else {
+                    rolloutThreads[identity] = source
+                }
+                guard !source.entries.isEmpty else { continue }
                 groups[identity, default: []].append(source)
             }
         }
@@ -290,27 +401,134 @@ final class CodexTokenUsage {
         }
     }
 
-    private func quotaWindows(at now: Date) -> [OfficeJSON] {
-        var newest: QuotaReport?
+    private func quotaWindows(at now: Date, pending: [UsageFileSignature], failed: [UsageFileSignature],
+                              inventoryErrors: Bool) -> (active: [OfficeJSON], closed: [OfficeJSON]) {
+        var newest: (report: QuotaReport, account: String?)?
         for (_, file) in files.sorted(by: { $0.key.path < $1.key.path }) {
             guard let report = file.quota, report.stamp <= now else { continue }
-            if let newest, newest.stamp >= report.stamp { continue }
-            newest = report
+            if let newest, newest.report.stamp >= report.stamp { continue }
+            newest = (report, file.account)
         }
         // A newer plan can make an old report misleading. Only look within the latest report.
+        guard let newest else { return ([], []) }
+        var active: [OfficeJSON] = []
+        var closed: [OfficeJSON] = []
         var durations = Set<Int>()
-        return (newest?.windows ?? []).compactMap { window in
-            guard now < window.resets, durations.insert(window.minutes).inserted else { return nil }
-            return [
+        for window in newest.report.windows where durations.insert(window.minutes).inserted {
+            if now >= window.resets {
+                if window.tracksCycle, let account = newest.account,
+                   let previous = previousCycle(minutes: window.minutes, through: now, account: account) {
+                    let ended = closedCycle(previous, account: account, pending: pending, failed: failed,
+                                            inventoryErrors: inventoryErrors)
+                    closed.append(["window_minutes": window.minutes, "previous_cycle": ended.payload])
+                }
+                continue
+            }
+            var payload: OfficeJSON = [
                 "remaining_percent": window.remaining,
                 "window_minutes": window.minutes,
                 "resets_at": officeISODate(window.resets),
             ]
+            let start = window.starts
+            guard window.tracksCycle, start <= newest.report.stamp else {
+                active.append(payload)
+                continue
+            }
+            payload["cycle_started_at"] = officeISODate(start)
+            let sample = QuotaSample(window: window, stamp: newest.report.stamp, plan: newest.report.plan)
+            let current = cycleUsage(latest: sample, basis: sample, account: newest.account, through: now,
+                                     closed: false, pending: pending, failed: failed, inventoryErrors: inventoryErrors)
+            current.write(to: &payload)
+
+            if let account = newest.account,
+               let previous = previousCycle(minutes: window.minutes, through: start, account: account) {
+                let ended = closedCycle(previous, account: account, pending: pending, failed: failed,
+                                        inventoryErrors: inventoryErrors)
+                payload["previous_cycle"] = ended.payload
+                if let prior = ended.estimate, let live = current.estimate, previous.latest.planMatches(sample) {
+                    let tolerance = Self.quotaEstimateTolerance
+                    let ratio = Double(live) / Double(prior)
+                    let comparison = ratio * (1 + tolerance) < (1 - tolerance) ? "lower"
+                        : ratio * (1 - tolerance) > (1 + tolerance) ? "higher" : "similar"
+                    payload["cycle_comparison"] = [
+                        "status": comparison,
+                        "change_percent": (ratio - 1) * 100,
+                        "tolerance_percent": tolerance * 100,
+                    ]
+                }
+            }
+            active.append(payload)
         }
+        return (active, closed)
+    }
+
+    private func closedCycle(_ samples: QuotaCycleSamples, account: String, pending: [UsageFileSignature],
+                             failed: [UsageFileSignature], inventoryErrors: Bool) -> (payload: OfficeJSON, estimate: Int?) {
+        let last = samples.latest
+        let closed = cycleUsage(latest: last, basis: samples.basis, account: account, through: last.window.resets,
+                                closed: true, pending: pending, failed: failed, inventoryErrors: inventoryErrors)
+        var payload: OfficeJSON = [
+            "resets_at": officeISODate(last.window.resets),
+            "sampled_at": officeISODate(last.stamp),
+            "used_percent": last.window.used,
+        ]
+        closed.write(to: &payload)
+        if let basis = samples.basis, let matched = closed.matchedTokens {
+            payload["basis_tokens"] = matched
+            payload["basis_used_percent"] = basis.window.used
+            payload["basis_sampled_at"] = officeISODate(basis.stamp)
+        }
+        return (payload, closed.estimate)
+    }
+
+    private func previousCycle(minutes: Int, through cutoff: Date, account: String) -> QuotaCycleSamples? {
+        var previous: QuotaCycleSamples?
+        for (_, file) in files.sorted(by: { $0.key.path < $1.key.path }) where file.account == account && file.usesOpenAI {
+            for (key, samples) in file.quotaCycles where key.minutes == minutes && key.resets <= cutoff {
+                if let prior = previous {
+                    guard prior.latest.window.resets <= key.resets else { continue }
+                    if prior.latest.window.resets == key.resets {
+                        previous?.record(samples.latest)
+                        if let basis = samples.basis { previous?.record(basis) }
+                        continue
+                    }
+                }
+                previous = samples
+            }
+        }
+        return previous
+    }
+
+    private func cycleUsage(latest: QuotaSample, basis: QuotaSample?, account: String?, through end: Date, closed: Bool,
+                            pending: [UsageFileSignature], failed: [UsageFileSignature], inventoryErrors: Bool) -> QuotaCycleUsage {
+        let start = latest.window.starts
+        guard !pending.contains(where: { $0.modified >= start }) else { return QuotaCycleUsage(status: "loading") }
+        let basis = basis.flatMap { $0.canEstimate && $0.planMatches(latest) ? $0 : nil }
+        var observed = 0
+        var atSnapshot = 0
+        var partial = inventoryErrors || failed.contains { $0.modified >= start }
+        for (id, summary) in sessions {
+            let source = rolloutThreads[id]
+            guard source?.usesOpenAI != false else { continue }
+            if let account, let other = source?.account, other != account { continue }
+            let baseline = summary.total(through: start, inclusive: false)
+            let tokens = summary.total(through: end, inclusive: !closed) - baseline
+            guard tokens > 0 else { continue }
+            if account == nil || source?.account == nil { partial = true }
+            observed = addingTokens(observed, tokens)
+            if let basis {
+                atSnapshot = addingTokens(atSnapshot, summary.total(through: basis.stamp) - baseline)
+            }
+        }
+        let estimate = basis.flatMap { sample in
+            !partial && atSnapshot > 0 ? Int(exactly: (Double(atSnapshot) / (sample.window.used / 100)).rounded()) : nil
+        }
+        return QuotaCycleUsage(status: partial ? "partial" : "ok", observed: observed,
+                               estimate: estimate, matchedTokens: estimate == nil ? nil : atSnapshot)
     }
 
     private func historyPayload(_ history: [Date: Int], breakdowns: [Date: UsageBreakdown],
-                                estimates: [Date: UsageEstimate], priceDate: String,
+                                estimates: [Date: UsageEstimate], totalEstimate: UsageEstimate, priceDate: String,
                                 today: Date, calendar: Calendar) -> OfficeJSON {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -332,10 +550,7 @@ final class CodexTokenUsage {
                     row["cache_reported_input_tokens"] = breakdown.cacheReportedInput
                 }
             }
-            if let estimate = estimates[date] {
-                row["estimated_usd"] = estimate.usd
-                row["priced_tokens"] = estimate.tokens
-            }
+            estimates[date]?.write(to: &row, components: true)
             return row
         }
         var payload: OfficeJSON = [
@@ -344,7 +559,8 @@ final class CodexTokenUsage {
             "first_day": history.keys.min().map(formatter.string(from:)) as Any? ?? NSNull(),
             "days": days,
         ]
-        if !estimates.isEmpty, !priceDate.isEmpty { payload["prices_updated_at"] = priceDate }
+        totalEstimate.write(to: &payload, prefix: "total_")
+        if totalEstimate.tokens > 0, !priceDate.isEmpty { payload["prices_updated_at"] = priceDate }
         return payload
     }
 
@@ -413,11 +629,46 @@ private struct DetailedUsageFilters {
     }
 }
 
-private struct DetailedUsageSession {
+private struct UsageRankedSession {
     let id: String
-    let project: String
-    let models: [String: Int]
     let tokens: Int
+    var project: String? = nil
+    var models: [String: Int] = [:]
+    var estimate = UsageEstimate()
+    var modelEstimates: [String: UsageEstimate] = [:]
+
+    static func rankedBefore(_ first: Self, _ second: Self) -> Bool {
+        first.tokens == second.tokens ? first.id < second.id : first.tokens > second.tokens
+    }
+}
+
+private struct UsageRankedGroup {
+    static let unassigned = "unassigned-guardian"
+
+    let session: UsageRankedSession
+    let children: [UsageRankedSession]
+}
+
+private struct UsageRankingRelations {
+    let knownIDs: Set<String>
+    let relations: [String: UsageThreadRelation]
+
+    func root(for id: String) -> String? {
+        let unlinked = relations[id]?.kind == .guardianReview ? nil : id
+        var current = id
+        var seen: Set<String> = [id]
+        var explicitRoot: String?
+        while let relation = relations[current] {
+            if let root = relation.root, root != current, knownIDs.contains(root), relations[root] == nil {
+                explicitRoot = root
+            }
+            guard let parent = relation.parent, knownIDs.contains(parent), seen.insert(parent).inserted else {
+                return explicitRoot ?? unlinked
+            }
+            current = parent
+        }
+        return current
+    }
 }
 
 private struct UsageFileSignature: Hashable {
@@ -468,6 +719,42 @@ private struct UsagePriceKey: Hashable {
     let longContext: Bool
 }
 
+/// Resolves each rate once per scan or ranking query, including absent rates.
+private final class UsageCostCalculator {
+    let prices: OfficePrices
+    private var rates: [UsagePriceKey: OfficeTokenPrice?] = [:]
+
+    init(_ prices: OfficePrices) {
+        self.prices = prices
+    }
+
+    func estimate(_ amounts: [UsagePriceKey: UsageBreakdown]) -> UsageEstimate {
+        amounts.reduce(into: UsageEstimate()) { total, pair in
+            total.add(estimate(pair.key, pair.value))
+        }
+    }
+
+    func estimate(_ key: UsagePriceKey, _ breakdown: UsageBreakdown) -> UsageEstimate {
+        let price: OfficeTokenPrice?
+        if let cached = rates[key] {
+            price = cached
+        } else {
+            let context = key.longContext ? OfficePrices.longContextInputThreshold + 1 : 0
+            price = prices.price(model: key.model, inputTokens: context)
+            rates.updateValue(price, forKey: key)
+        }
+        guard let price, let cached = breakdown.cached else { return UsageEstimate() }
+        let cachedUSD = Double(cached) * price.cachedInput / 1_000_000
+        let inputUSD = Double(breakdown.input - cached) * price.input / 1_000_000 + cachedUSD
+        let outputUSD = Double(breakdown.output) * price.output / 1_000_000
+        guard (inputUSD + outputUSD).isFinite, inputUSD >= 0, outputUSD >= 0, cachedUSD >= 0 else {
+            return UsageEstimate()
+        }
+        return UsageEstimate(inputTokens: breakdown.input, outputTokens: breakdown.output, cachedTokens: cached,
+                             inputUSD: inputUSD, outputUSD: outputUSD, cachedUSD: cachedUSD)
+    }
+}
+
 private struct UsageBreakdown {
     private(set) var input = 0
     private(set) var output = 0
@@ -508,22 +795,41 @@ private struct UsageBreakdown {
         }
     }
 
-    func cost(using price: OfficeTokenPrice) -> Double? {
-        guard let cached else { return nil }
-        let usd = (Double(input - cached) * price.input + Double(cached) * price.cachedInput
-                   + Double(output) * price.output) / 1_000_000
-        return usd.isFinite && usd >= 0 ? usd : nil
-    }
 }
 
 private struct UsageEstimate {
-    var tokens = 0
-    var usd = 0.0
+    var inputTokens = 0
+    var outputTokens = 0
+    var cachedTokens = 0
+    var inputUSD = 0.0
+    var outputUSD = 0.0
+    var cachedUSD = 0.0
 
-    mutating func add(tokens: Int, usd: Double) {
-        guard (self.usd + usd).isFinite else { return }
-        self.tokens = addingTokens(self.tokens, tokens)
-        self.usd += usd
+    var tokens: Int { addingTokens(inputTokens, outputTokens) }
+    var usd: Double { inputUSD + outputUSD }
+
+    mutating func add(_ other: Self) {
+        guard (usd + other.usd).isFinite else { return }
+        inputTokens = addingTokens(inputTokens, other.inputTokens)
+        outputTokens = addingTokens(outputTokens, other.outputTokens)
+        cachedTokens = addingTokens(cachedTokens, other.cachedTokens)
+        inputUSD += other.inputUSD
+        outputUSD += other.outputUSD
+        cachedUSD += other.cachedUSD
+    }
+
+    func write(to payload: inout OfficeJSON, prefix: String = "", components: Bool = false) {
+        guard tokens > 0 else { return }
+        payload[prefix + "estimated_usd"] = usd
+        payload[prefix + "priced_tokens"] = tokens
+        if components {
+            payload["estimated_input_usd"] = inputUSD
+            payload["estimated_output_usd"] = outputUSD
+            payload["estimated_cached_input_usd"] = cachedUSD
+            payload["priced_input_tokens"] = inputTokens
+            payload["priced_output_tokens"] = outputTokens
+            payload["priced_cached_input_tokens"] = cachedTokens
+        }
     }
 }
 
@@ -531,10 +837,15 @@ private struct QuotaReport {
     struct Window {
         let minutes: Int
         let resets: Date
+        let used: Double
         let remaining: Double
+
+        var tracksCycle: Bool { minutes == 300 || minutes == 10_080 }
+        var starts: Date { resets.addingTimeInterval(-Double(minutes) * 60) }
     }
 
     let stamp: Date
+    let plan: String?
     let windows: [Window]
 
     init?(_ value: Any?, stamp: Date) {
@@ -546,13 +857,62 @@ private struct QuotaReport {
                   let reset = usageNumber(window["resets_at"])?.doubleValue,
                   (-62_135_596_800..<253_402_300_800).contains(reset) else { return nil }
             let remaining = ((100 - used) * 100).rounded(.toNearestOrEven) / 100
-            return Window(minutes: minutes, resets: Date(timeIntervalSince1970: reset), remaining: remaining)
+            return Window(minutes: minutes, resets: Date(timeIntervalSince1970: reset), used: used, remaining: remaining)
         }
         guard !windows.isEmpty else { return nil }
         self.stamp = stamp
+        plan = data["plan_type"] as? String
         self.windows = windows.sorted { left, right in
             (left.minutes, left.resets, left.remaining) > (right.minutes, right.resets, right.remaining)
         }
+    }
+}
+
+private struct QuotaCycleKey: Hashable {
+    let minutes: Int
+    let resets: Date
+}
+
+private struct QuotaSample {
+    let window: QuotaReport.Window
+    let stamp: Date
+    let plan: String?
+
+    // Small percentages are sensitive to rounding; 100% can include usage beyond the limit.
+    var canEstimate: Bool { (5..<100).contains(window.used) }
+
+    func planMatches(_ other: Self) -> Bool { plan == other.plan }
+
+    func isNewer(than other: Self) -> Bool {
+        (stamp, window.used) > (other.stamp, other.window.used)
+    }
+}
+
+private struct QuotaCycleSamples {
+    var latest: QuotaSample
+    var basis: QuotaSample?
+
+    init(_ sample: QuotaSample) {
+        latest = sample
+        basis = sample.canEstimate ? sample : nil
+    }
+
+    mutating func record(_ sample: QuotaSample) {
+        if sample.isNewer(than: latest) { latest = sample }
+        if sample.canEstimate, basis.map({ sample.isNewer(than: $0) }) ?? true { basis = sample }
+    }
+}
+
+private struct QuotaCycleUsage {
+    let status: String
+    var observed: Int? = nil
+    var estimate: Int? = nil
+    var matchedTokens: Int? = nil
+
+    func write(to payload: inout OfficeJSON) {
+        payload["cycle_status"] = status
+        payload["cycle_tokens"] = observed
+        payload["cycle_estimated_tokens"] = estimate
     }
 }
 
@@ -566,11 +926,14 @@ private struct UsageFile {
     var hasMetadata = false
     var created: Date?
     var workspace: String?
+    var relation: UsageThreadRelation?
     var inheritsHistory = false
     private var model: String?
-    private var allowsOfficialPrices = true
+    private(set) var usesOpenAI = true
+    private(set) var account: String?
     var entries: [UsageEvent] = []
     var quota: QuotaReport?
+    var quotaCycles: [QuotaCycleKey: QuotaCycleSamples] = [:]
 
     init(path: URL, signature: UsageFileSignature) {
         self.signature = signature
@@ -587,8 +950,10 @@ private struct UsageFile {
             identity = officeThreadID(payload["id"]) ?? identity
             created = officeTimestamp(payload["timestamp"]) ?? officeTimestamp(row["timestamp"])
             workspace = officeCanonicalPath(payload["cwd"]) ?? workspace
+            relation = UsageThreadRelation(metadata: payload)
             let subagent = (payload["source"] as? OfficeJSON)?["subagent"]
-            allowsOfficialPrices = (payload["model_provider"] as? String).map { $0 == "openai" } ?? true
+            usesOpenAI = (payload["model_provider"] as? String).map { $0 == "openai" } ?? true
+            if let id = payload["creator_account_id"] as? String, !id.isEmpty { account = id }
             model = modelName(payload["model"])
             inheritsHistory = [
                 payload["forked_from_id"], payload["forked_from_session_id"], payload["parent_thread_id"], subagent,
@@ -602,9 +967,17 @@ private struct UsageFile {
         }
         guard type == "event_msg", payload["type"] as? String == "token_count",
               let stamp = officeTimestamp(row["timestamp"]) else { return }
-        if (created.map { stamp >= $0 } ?? true), (quota.map { stamp >= $0.stamp } ?? true),
-           let report = QuotaReport(payload["rate_limits"], stamp: stamp) {
-            quota = report
+        if usesOpenAI, (created.map { stamp >= $0 } ?? true), let report = QuotaReport(payload["rate_limits"], stamp: stamp) {
+            if quota.map({ stamp >= $0.stamp }) ?? true { quota = report }
+            if account != nil {
+                // Keep two samples per observed reset rather than every token event.
+                for window in report.windows where window.tracksCycle && window.starts <= stamp && stamp < window.resets {
+                    let key = QuotaCycleKey(minutes: window.minutes, resets: window.resets)
+                    let sample = QuotaSample(window: window, stamp: stamp, plan: report.plan)
+                    if quotaCycles[key] == nil { quotaCycles[key] = QuotaCycleSamples(sample) }
+                    else { quotaCycles[key]?.record(sample) }
+                }
+            }
         }
         guard let info = payload["info"] as? OfficeJSON else { return }
         let total = usageCount(info["total_token_usage"])
@@ -616,7 +989,7 @@ private struct UsageFile {
                                            reasoningIncluded: info["last_usage_includes_reasoning"] as? Bool)
             let hasCacheWrites = (usageInteger(lastUsage?["cache_write_input_tokens"]) ?? 0) != 0
             let recordedModel = modelName(payload["model"]) ?? model
-            let pricedModel = allowsOfficialPrices && !hasCacheWrites && breakdown?.cached != nil ? recordedModel : nil
+            let pricedModel = usesOpenAI && !hasCacheWrites && breakdown?.cached != nil ? recordedModel : nil
             entries.append(UsageEvent(key: key, model: recordedModel, pricedModel: pricedModel, breakdown: breakdown))
         }
     }
@@ -636,6 +1009,7 @@ private struct UsageSummary {
     var priceableDays: [Date: [UsagePriceKey: UsageBreakdown]] = [:]
     var stamps: [Date] = []
     var prefix: [Int] = [0]
+    var pricedEvents: [(stamp: Date, key: UsagePriceKey, breakdown: UsageBreakdown)] = []
 
     init(sources: [UsageFile], signatures: [UsageFileSignature], calendar: Calendar) {
         self.signatures = signatures
@@ -698,20 +1072,34 @@ private struct UsageSummary {
                         let longContext = breakdown.input > OfficePrices.longContextInputThreshold
                         let key = UsagePriceKey(model: model, longContext: longContext)
                         priceableDays[day, default: [:]][key, default: UsageBreakdown()].add(breakdown)
+                        pricedEvents.append((counters.stamp, key, breakdown))
                     }
                 }
             }
         }
     }
 
-    func total(through date: Date) -> Int {
+    func total(through date: Date, inclusive: Bool = true) -> Int {
+        prefix[usageIndex(after: date, in: stamps, inclusive: inclusive, time: { $0 })]
+    }
+
+    func liveEstimate(after cutoff: Date, through now: Date, costs: UsageCostCalculator) -> UsageEstimate {
+        let start = usageIndex(after: cutoff, in: pricedEvents, time: { $0.stamp })
+        let end = usageIndex(after: now, in: pricedEvents, time: { $0.stamp })
+        return pricedEvents[start..<end].reduce(into: UsageEstimate()) { total, event in
+            total.add(costs.estimate(event.key, event.breakdown))
+        }
+    }
+
+    private func usageIndex<Event>(after date: Date, in entries: [Event], inclusive: Bool = true, time: (Event) -> Date) -> Int {
         var low = 0
-        var high = stamps.count
+        var high = entries.count
         while low < high {
             let mid = low + (high - low) / 2
-            if stamps[mid] <= date { low = mid + 1 } else { high = mid }
+            let stamp = time(entries[mid])
+            if stamp < date || (inclusive && stamp == date) { low = mid + 1 } else { high = mid }
         }
-        return prefix[low]
+        return low
     }
 }
 

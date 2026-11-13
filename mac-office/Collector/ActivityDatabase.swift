@@ -167,6 +167,49 @@ func activityNames(home: URL, ids: Set<String>) -> [String: [String: String]] {
     return names
 }
 
+func usageThreadRelations(home: URL) -> (ids: Set<String>, relations: [String: UsageThreadRelation]) {
+    var ids = Set<String>()
+    var relations: [String: UsageThreadRelation] = [:]
+    for path in stateDatabases(in: home) {
+        do {
+            let database = try ActivityDatabase(path)
+            let columns = try database.columns(in: "threads")
+            if columns.contains("id") {
+                let selected = ["thread_source", "source", "attached_thread_parent_id"].filter { columns.contains($0) }
+                try database.rows("SELECT " + (["id"] + selected).joined(separator: ",") + " FROM threads") { row in
+                    guard let id = officeThreadID(databaseText(row, 0)) else { return }
+                    ids.insert(id)
+                    var metadata: OfficeJSON = [:]
+                    for (index, field) in selected.enumerated() {
+                        guard let value = databaseText(row, Int32(index + 1)) else { continue }
+                        if field == "source" {
+                            metadata[field] = try? JSONSerialization.jsonObject(with: Data(value.utf8))
+                        } else if field != "attached_thread_parent_id" {
+                            metadata[field] = value
+                        }
+                    }
+                    guard var relation = UsageThreadRelation(metadata: metadata) else { return }
+                    if let index = selected.firstIndex(of: "attached_thread_parent_id"),
+                       let parent = officeThreadID(databaseText(row, Int32(index + 1))) {
+                        relation = relation.fillingMissingFields(from: .init(kind: relation.kind, parent: parent))
+                    }
+                    relations[id] = relations[id]?.fillingMissingFields(from: relation) ?? relation
+                }
+            }
+            let edges = try database.columns(in: "thread_spawn_edges")
+            guard Set(["child_thread_id", "parent_thread_id"]).isSubset(of: edges) else { continue }
+            try database.rows("SELECT child_thread_id,parent_thread_id FROM thread_spawn_edges") { row in
+                guard let child = officeThreadID(databaseText(row, 0)), let parent = officeThreadID(databaseText(row, 1)) else { return }
+                ids.insert(child)
+                ids.insert(parent)
+                let relation = UsageThreadRelation(kind: .subagent, parent: parent)
+                relations[child] = relations[child]?.fillingMissingFields(from: relation) ?? relation
+            }
+        } catch { continue }
+    }
+    return (ids, relations)
+}
+
 func readOfficeSidebar(_ home: URL, threadIDs: Set<String> = []) -> (OfficeJSON, [String: String]) {
     for path in stateDatabases(in: home) {
         do {

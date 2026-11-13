@@ -277,9 +277,21 @@
     .usage-status, .usage-empty { margin: 5px 0 0; }
     .usage-status[data-status="partial"], .usage-status[data-status="unavailable"] { color: var(--amber); }
     .usage-tally { font-variant-numeric: tabular-nums; }
+    .usage-money { color: var(--muted); font-size: 10px; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .usage-amount { display: inline-flex; flex: none; align-items: baseline; gap: 5px; }
+    #usage-price-note { margin: 0 0 8px; }
     .usage-plan { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 9px 0 0; }
     .usage-plan-percent { color: var(--accent); }
     .usage-plan-countdown { color: var(--accent); font-weight: 650; }
+    .usage-plan-cycle {
+      flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: baseline;
+      gap: 3px 14px; margin: 1px 0 0; color: var(--muted); font-size: 11px;
+    }
+    .usage-plan-cycle strong { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+    .usage-plan-previous { padding: 4px 0 0; border-top: 1px solid var(--line); }
+    .usage-cycle-comparison { color: var(--text); }
+    .usage-cycle-comparison[data-status="lower"] { color: var(--amber); }
+    .usage-cycle-comparison[data-status="higher"] { color: var(--mint); }
     .usage-plan progress {
       -webkit-appearance: none; appearance: none; flex: 0 0 100%;
       width: 100%; height: 6px; margin-top: 2px; border: 0; border-radius: 6px;
@@ -348,6 +360,7 @@
     }
     #usage-tooltip span { display: block; margin-top: 3px; }
     .usage-ranking { margin-top: 14px; }
+    #usage-ranking-toggle { font-size: 11px; padding: 3px 8px; }
     #usage-ranking { margin: 5px 0 0; padding: 0; list-style: none; }
     #usage-ranking button {
       display: flex; justify-content: space-between; gap: 12px; width: 100%;
@@ -356,6 +369,21 @@
     #usage-ranking button:hover { background: var(--active); }
     #usage-ranking button span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #usage-ranking .usage-tally { white-space: nowrap; color: var(--muted); }
+    #usage-ranking > li + li { border-top: 1px solid var(--line); }
+    #usage-ranking summary {
+      display: flex; align-items: baseline; gap: 7px; padding: 5px 6px; cursor: pointer; border-radius: 5px;
+    }
+    #usage-ranking summary::-webkit-details-marker { display: none; }
+    #usage-ranking summary:hover { background: var(--active); }
+    #usage-ranking summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    #usage-ranking summary::before { content: '›'; color: var(--accent); font-weight: 700; }
+    #usage-ranking details[open] > summary::before { transform: rotate(90deg); }
+    #usage-ranking summary .usage-amount { margin-inline-start: auto; }
+    .usage-ranking-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .usage-ranking-children {
+      list-style: none; margin: 1px 0 5px 13px; padding: 0 0 0 6px; border-inline-start: 1px solid var(--line);
+      color: var(--muted); font-size: 11px;
+    }
     @media (max-width: 480px) {
       .usage-live { grid-template-columns: 1fr; gap: 8px; }
     }
@@ -374,9 +402,10 @@
       </svg>
     </button>
   </header>
-  <dl class="office-usage-summary">
+  <dl class="office-usage-summary" title="金额按标准 API 标价折算（USD），不代表实际扣费。">
     <div><dt>今日用量</dt><dd><strong id="office-tokens-today">—</strong></dd></div>
-    <div><dt>Token 速度</dt><dd><strong id="office-token-rate">—</strong></dd></div>
+    <div><dt>Token 速度</dt><dd><strong id="office-token-rate">—</strong>
+      <small id="office-token-rate-cost" class="usage-money" hidden></small></dd></div>
     <div><dt>API 估算</dt><dd><strong id="office-cost-today">—</strong></dd></div>
   </dl>
   <div class="view-tabs" role="group" aria-label="面板视图">
@@ -536,10 +565,12 @@
     <div id="settings-help-tooltip" class="dialog-help-tooltip" aria-hidden="true" hidden></div>
   </dialog>
   <main id="usage-panel" aria-label="Token 用量" tabindex="-1" hidden>
+    <p id="usage-price-note" class="dialog-note">金额按标准 API 标价折算（USD），不代表实际扣费。</p>
     <div class="usage-live">
       <section aria-labelledby="usage-live-title">
         <h2 id="usage-live-title">最近 1 分钟</h2>
-        <p class="usage-rate"><strong id="usage-rate" class="usage-tally">—</strong><span>tokens/min</span></p>
+        <p class="usage-rate"><strong id="usage-rate" class="usage-tally">—</strong><span>tokens/min</span>
+          <small id="usage-rate-cost" class="usage-money"></small></p>
         <p class="usage-status" id="usage-live-status" role="status">正在读取最近用量…</p>
       </section>
       <section aria-labelledby="usage-recent-title">
@@ -554,6 +585,8 @@
       <span id="usage-plan-note" class="usage-plan-note usage-range">本机暂无有效记录</span>
       <span id="usage-plan-countdown" class="usage-plan-countdown usage-range usage-tally" hidden></span>
       <progress id="usage-plan-progress" max="100" value="0" aria-labelledby="usage-plan-label" hidden></progress>
+      <p class="usage-plan-cycle" hidden></p>
+      <p class="usage-plan-cycle usage-plan-previous" hidden></p>
     </div>
     <div class="usage-plan" hidden>
       <span id="usage-plan-second-label" class="usage-plan-label"></span>
@@ -561,11 +594,15 @@
       <span class="usage-plan-note usage-range"></span>
       <span class="usage-plan-countdown usage-range usage-tally" hidden></span>
       <progress max="100" value="0" aria-labelledby="usage-plan-second-label" hidden></progress>
+      <p class="usage-plan-cycle" hidden></p>
+      <p class="usage-plan-cycle usage-plan-previous" hidden></p>
     </div>
+    <p id="usage-cycle-note" class="dialog-note" hidden>容量按本机用量和同一时刻的已用比例外推，仅供参考。模型、任务和其他设备的用量都可能影响结果。</p>
+    <p id="usage-comparison-note" class="dialog-note" hidden></p>
     <section class="usage-history" aria-labelledby="usage-history-title">
       <div class="usage-heading">
         <div class="usage-history-heading">
-          <h2 id="usage-history-title">最近 30 天</h2>
+          <h2 id="usage-history-title">本机用量</h2>
           <button id="open-usage-detail" type="button" hidden>详细用量</button>
         </div>
         <span class="usage-range" id="usage-coverage"></span>
@@ -574,7 +611,8 @@
       <div id="usage-history-placeholder" aria-hidden="true" hidden></div>
       <div id="usage-history" hidden>
         <dl class="usage-metrics">
-          <div><dt>本机累计 tokens</dt><dd id="usage-total" class="usage-tally">—</dd></div>
+          <div><dt>本机累计 Token · 全部历史</dt><dd id="usage-total" class="usage-tally">—</dd>
+            <dd id="usage-total-cost" class="usage-metric-note"></dd></div>
           <div><dt>本机活跃天数</dt><dd id="usage-days" class="usage-tally">—</dd></div>
           <div>
             <dt>30 天峰值日 <span id="usage-peak-date"></span></dt>
@@ -583,19 +621,28 @@
           </div>
         </dl>
         <figure class="usage-chart" aria-label="每日 token 用量">
-          <figcaption id="usage-day-detail" class="usage-tally"></figcaption>
+          <figcaption class="usage-heading">
+            <strong>最近 30 天</strong>
+            <span class="usage-amount"><span id="usage-day-detail" class="usage-tally"></span>
+              <small id="usage-day-cost" class="usage-money"></small></span>
+          </figcaption>
           <div id="usage-bars" role="group" aria-label="每日用量，可使用左右方向键选择日期"></div>
           <div class="usage-axis" aria-hidden="true"><span id="usage-start"></span><span id="usage-end"></span></div>
         </figure>
         <dl class="usage-metrics usage-breakdown" aria-label="所选日期的 Token 明细">
-          <div><dt>输入 Token</dt><dd id="usage-day-input" class="usage-tally">—</dd></div>
-          <div><dt>输出 Token</dt><dd id="usage-day-output" class="usage-tally">—</dd></div>
+          <div><dt>输入 Token</dt><dd id="usage-day-input" class="usage-tally">—</dd>
+            <dd id="usage-day-input-cost" class="usage-metric-note"></dd></div>
+          <div><dt>输出 Token</dt><dd id="usage-day-output" class="usage-tally">—</dd>
+            <dd id="usage-day-output-cost" class="usage-metric-note"></dd></div>
           <div><dt>缓存命中率</dt><dd id="usage-day-cache" class="usage-tally">—</dd>
-            <dd id="usage-day-cache-count" class="usage-metric-note" hidden></dd></div>
+            <dd class="usage-metric-note"><span id="usage-day-cache-count" hidden></span>
+              <small id="usage-day-cache-cost" class="usage-money" hidden></small></dd></div>
         </dl>
-        <p id="usage-price-note" class="dialog-note"></p>
         <div class="usage-ranking" aria-labelledby="usage-ranking-title">
-          <h3 id="usage-ranking-title">当日会话排行</h3>
+          <div class="usage-heading">
+            <h3 id="usage-ranking-title">当日会话排行</h3>
+            <button type="button" id="usage-ranking-toggle" aria-controls="usage-ranking" hidden>全部收起</button>
+          </div>
           <p id="usage-ranking-status" class="usage-status" role="status"></p>
           <ol id="usage-ranking"></ol>
         </div>
@@ -2853,6 +2900,10 @@
   let usagePoints = [];
   let usageDayRequest = 0;
   let usageDayKeyRequested = '';
+  const usageRanking = byId('usage-ranking');
+  const usageRankingToggle = byId('usage-ranking-toggle');
+  const usageGroupStates = new Map();
+  let usageGroupsExpanded = true;
   const usageRows = new Map();
   let lastToolbarState = '';
 
@@ -2888,11 +2939,13 @@
     const status = usageState(usage?.live_status);
     const rate = usageHasData(status) ? usageCount(usage?.tokens_per_minute) : null;
     const recent = usageHasData(status) && Array.isArray(usage?.recent) ? usage.recent : [];
-    const key = JSON.stringify([status,rate,recent]);
+    const liveCost = estimatedUsageCost(rate,usage?.live_estimated_usd,usage?.live_priced_tokens,status==='partial');
+    const key = JSON.stringify([status,rate,recent,liveCost]);
     if (key===renderedUsageLive) return;
     renderedUsageLive = key;
 
     usageText(byId('usage-rate'),usageFormat(rate));
+    renderUsageMoney(byId('usage-rate-cost'),liveCost);
     const liveMessages = {
       loading:t('正在读取最近用量…'),
       partial:t('部分日志未能读取。'),
@@ -2915,17 +2968,23 @@
         const button = document.createElement('button');
         const title = document.createElement('span');
         const tally = document.createElement('span');
+        const amount = document.createElement('span');
+        const money = document.createElement('small');
         button.type = 'button';
         tally.className = 'usage-tally';
-        button.append(title,tally);
+        amount.className = 'usage-amount';
+        money.className = 'usage-money';
+        amount.append(tally,money);
+        button.append(title,amount);
         button.addEventListener('click',() => openChat(id));
         element.append(button);
-        row = {element,button,title,tally};
+        row = {element,button,title,tally,money};
         usageRows.set(id,row);
       }
       const name = item.title===undefined ? t('聊天 …{0}',id.slice(-8)) : chatTitle(item);
       usageText(row.title,name);
       usageText(row.tally,usageFormat(count)+' tokens');
+      renderUsageMoney(row.money,estimatedUsageCost(count,item.estimated_usd,item.priced_tokens));
       row.button.title = name;
       if (usageRecent.children[index]!==row.element) {
         usageRecent.insertBefore(row.element,usageRecent.children[index] ?? null);
@@ -2959,10 +3018,15 @@
     return {amount,partial:partialLogs || pricedTokens<count};
   }
 
-  function usageCost(estimate, includeCoverage = true) {
+  function usageCost(estimate) {
     if (!estimate) return t('API 费用预估暂无数据');
     const label = t('API 费用预估 {0}',estimate.amount);
-    return includeCoverage && estimate.partial ? label+' · '+t('仅部分用量可估价') : label;
+    return estimate.partial ? label+' · '+t('仅部分用量可估价') : label;
+  }
+
+  function renderUsageMoney(element,estimate) {
+    usageText(element,estimate?.amount ?? '—');
+    element.title = usageCost(estimate);
   }
 
   function usageBreakdown(record, count) {
@@ -2985,9 +3049,14 @@
     usageText(inputField,usageFormat(input));
     usageText(outputField,usageFormat(output));
     usageText(cacheField,cacheRate ?? '—');
+    renderUsageMoney(byId('usage-day-input-cost'),point.inputEstimate);
+    renderUsageMoney(byId('usage-day-output-cost'),point.outputEstimate);
     const cacheCount = byId('usage-day-cache-count');
+    const cacheCost = byId('usage-day-cache-cost');
     cacheCount.hidden = !cacheRate;
+    cacheCost.hidden = !cacheRate;
     usageText(cacheCount,cacheRate ? t('{0} / {1} 输入 Token',usageFormat(cached),usageFormat(denominator)) : '');
+    renderUsageMoney(cacheCost,point.cacheEstimate);
     const splitNote = input===null && point.count>0 ? t('本机日志暂无当日 Token 明细。')
       : splitPartial ? t('输入和输出仅统计有明细的用量。') : '';
     inputField.parentElement.title = outputField.parentElement.title = splitNote;
@@ -3020,10 +3089,11 @@
 
   function requestUsageDay(point) {
     const loading = usage?.history_status==='loading';
-    const key = JSON.stringify([point.day,point.count,i18n.language,loading]);
+    const key = JSON.stringify([point.day,point.count,point.estimate,lastUsageHistory?.data?.prices_updated_at,i18n.language,loading]);
     if (usageDayKeyRequested===key) return;
     usageDayKeyRequested = key;
-    byId('usage-ranking').replaceChildren();
+    usageRanking.replaceChildren();
+    usageRankingToggle.hidden = true;
     const request = ++usageDayRequest;
     if (loading) {
       usageStatus('usage-ranking-status','loading',t('历史更新完成后将显示当日会话用量。'));
@@ -3033,6 +3103,69 @@
     bridge({action:'usageDay',day:point.day,request});
   }
 
+  function updateUsageRankingToggle() {
+    const groups = [...usageRanking.querySelectorAll('details')];
+    usageRankingToggle.hidden = !groups.length;
+    usageText(usageRankingToggle,t(groups.some(group => group.open)?'全部收起':'全部展开'));
+  }
+
+  usageRankingToggle.addEventListener('click',() => {
+    const groups = [...usageRanking.querySelectorAll('details')];
+    usageGroupsExpanded = !groups.some(group => group.open);
+    usageGroupStates.clear();
+    for (const group of groups) group.open = usageGroupsExpanded;
+    updateUsageRankingToggle();
+  });
+
+  function usageRankingLabel(control,item) {
+    const name = document.createElement('span');
+    const tokens = document.createElement('span');
+    const amount = document.createElement('span');
+    const money = document.createElement('small');
+    const title = typeof item.title==='string' && item.title.trim() ? item.title : t('聊天 …{0}',item.id.slice(-8));
+    const role = {self:'主对话自身',subagent:'子 Agent',guardian_review:'自动审批'}[item.kind];
+    name.className = 'usage-ranking-name';
+    name.textContent = role ? t(role)+' · '+title : title;
+    control.title = name.textContent;
+    tokens.className = 'usage-tally';
+    tokens.textContent = usageFormat(item.tokens)+' tokens';
+    amount.className = 'usage-amount';
+    money.className = 'usage-money';
+    renderUsageMoney(money,estimatedUsageCost(item.tokens,item.estimated_usd,item.priced_tokens));
+    amount.append(tokens,money);
+    control.append(name,amount);
+  }
+
+  function usageRankingChat(item) {
+    const row = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    usageRankingLabel(button,item);
+    button.addEventListener('click',() => openChat(item.id));
+    row.append(button);
+    return row;
+  }
+
+  function usageRankingGroup(item,children) {
+    const row = document.createElement('li');
+    const disclosure = document.createElement('details');
+    const summary = document.createElement('summary');
+    const list = document.createElement('ul');
+    list.className = 'usage-ranking-children';
+    usageRankingLabel(summary,item);
+    disclosure.open = usageGroupStates.get(item.id) ?? usageGroupsExpanded;
+    disclosure.addEventListener('toggle',() => {
+      if (!disclosure.isConnected) return;
+      if (disclosure.open===usageGroupsExpanded) usageGroupStates.delete(item.id);
+      else usageGroupStates.set(item.id,disclosure.open);
+      updateUsageRankingToggle();
+    });
+    list.append(...children.map(usageRankingChat));
+    disclosure.append(summary,list);
+    row.append(disclosure);
+    return row;
+  }
+
   window.officeReceiveUsageDay = (data,request) => {
     if (request!==usageDayRequest || !showingUsage || data?.day!==selectedUsageDay) return;
     if (data.unavailable) {
@@ -3040,26 +3173,19 @@
       return;
     }
     const rows = Array.isArray(data.sessions) ? data.sessions : [];
-    const list = byId('usage-ranking');
-    list.replaceChildren();
+    usageRanking.replaceChildren();
+    const validChat = item => typeof item?.id==='string' && usageUUID.test(item.id) && usageCount(item.tokens)!==null;
     for (const item of rows) {
-      if (typeof item.id!=='string' || !usageUUID.test(item.id) || usageCount(item.tokens)===null) continue;
-      const row = document.createElement('li');
-      const button = document.createElement('button');
-      const name = document.createElement('span');
-      const tokens = document.createElement('span');
-      button.type = 'button';
-      name.textContent = typeof item.title==='string' && item.title.trim() ? item.title : t('聊天 …{0}',item.id.slice(-8));
-      button.title = name.textContent;
-      tokens.className = 'usage-tally';
-      tokens.textContent = usageFormat(item.tokens)+' tokens';
-      button.append(name,tokens);
-      button.addEventListener('click',() => openChat(item.id));
-      row.append(button);
-      list.append(row);
+      const synthetic = item?.id==='unassigned-guardian' && item.kind==='unassigned_guardian' && usageCount(item.tokens)!==null;
+      if (!synthetic && !validChat(item)) continue;
+      const children = Array.isArray(item.children) ? item.children.filter(validChat) : [];
+      if (children.length) usageRanking.append(usageRankingGroup(item,children));
+      else if (!synthetic) usageRanking.append(usageRankingChat(item));
     }
-    const note = !list.children.length ? t('这一天没有会话用量')
-      : data.total_sessions>list.children.length ? t('显示前 {0} 个会话，共 {1} 个',list.children.length,data.total_sessions) : '';
+    updateUsageRankingToggle();
+    const count = usageRanking.children.length;
+    const note = !count ? t('这一天没有会话用量')
+      : data.total_sessions>count ? t('显示前 {0} 组，共 {1} 组',count,data.total_sessions) : '';
     usageStatus('usage-ranking-status','ok',note);
   };
 
@@ -3072,6 +3198,7 @@
       button.setAttribute('aria-pressed',String(i===index));
     }
     usageText(byId('usage-day-detail'),point.label);
+    renderUsageMoney(byId('usage-day-cost'),point.estimate);
     renderUsageBreakdown(point);
     usageText(byId('usage-ranking-title'),t('{0} 会话用量排行',point.day));
     requestUsageDay(point);
@@ -3106,9 +3233,7 @@
     const records = Array.isArray(history.days) ? history.days : [];
     const days = new Map(records.filter(point => usageDate(point?.day)).map(point => [point.day,point]));
     const priceDate = usageDate(history.prices_updated_at) ? history.prices_updated_at : null;
-    usageText(byId('usage-price-note'),priceDate
-      ? t('按 {0} 的官方标准 API 单价估算（USD），与套餐扣费无关。',priceDate)
-      : t('有模型和 Token 明细时，按官方标准 API 单价估算（USD）。'));
+    byId('usage-price-note').title = priceDate ? t('API 价目表更新于 {0}',priceDate) : '';
     const lastDay = records.length===30 && usageDate(records[29]?.day) ? records[29].day : usageDayKey(new Date());
     const end = new Date(lastDay+'T12:00:00');
     const followToday = selectedUsageDay===usagePoints.at(-1)?.day;
@@ -3119,16 +3244,20 @@
       const record = days.get(day);
       const count = usageCount(record?.tokens);
       const label = day+' · '+(count===null?t('暂无数据'):usageFormat(count)+' tokens');
-      const estimate = estimatedUsageCost(count,record?.estimated_usd,record?.priced_tokens,lastUsageHistory.status==='partial');
-      return {day,count,label,estimate,breakdown:usageBreakdown(record,count)};
+      const partial = lastUsageHistory.status==='partial';
+      const estimate = estimatedUsageCost(count,record?.estimated_usd,record?.priced_tokens,partial);
+      const breakdown = usageBreakdown(record,count);
+      const inputEstimate = estimatedUsageCost(breakdown.input,record?.estimated_input_usd,record?.priced_input_tokens,partial);
+      const outputEstimate = estimatedUsageCost(breakdown.output,record?.estimated_output_usd,record?.priced_output_tokens,partial);
+      const cacheEstimate = estimatedUsageCost(breakdown.cached,record?.estimated_cached_input_usd,record?.priced_cached_input_tokens,partial);
+      return {day,count,label,estimate,breakdown,inputEstimate,outputEstimate,cacheEstimate};
     });
     const peak = usagePoints.reduce((best,point) => point.count>0 && (!best || point.count>=best.count) ? point : best,null);
     const max = peak?.count ?? 1;
     usageText(byId('usage-peak-date'),peak ? '· '+shortUsageDay(peak.day) : '');
     usageText(byId('usage-peak'),peak ? usageFormat(peak.count)+' tokens' : '—');
     const peakCost = byId('usage-peak-cost');
-    usageText(peakCost,peak ? usageCost(peak.estimate,false) : '');
-    peakCost.title = peak?.estimate?.partial ? usageCost(peak.estimate) : '';
+    renderUsageMoney(peakCost,peak?.estimate);
     for (const [i,point] of usagePoints.entries()) {
       let button = usageBars.children[i];
       if (!button) {
@@ -3150,7 +3279,10 @@
     }
     const selected = usagePoints.findIndex(point => point.day===selectedUsageDay);
     selectUsagePoint(followToday || selected<0 ? usagePoints.length-1 : selected);
-    usageText(byId('usage-total'),usageFormat(usageCount(history.total_tokens)));
+    const total = usageCount(history.total_tokens);
+    usageText(byId('usage-total'),usageFormat(total));
+    renderUsageMoney(byId('usage-total-cost'),estimatedUsageCost(total,history.total_estimated_usd,
+      history.total_priced_tokens,lastUsageHistory.status==='partial'));
     usageText(byId('usage-days'),usageFormat(usageCount(history.active_days)));
     usageText(byId('usage-start'),shortUsageDay(usagePoints[0].day));
     usageText(byId('usage-end'),shortUsageDay(lastDay)+' · '+t('今日'));
@@ -3160,10 +3292,27 @@
     clearTimeout(usageResetTimer);
     const now = Date.now();
     const windows = (usage?.quota_windows ?? [usage?.quota]).map(quota => ({
-      percent:quota?.remaining_percent, minutes:quota?.window_minutes, reset:Date.parse(quota?.resets_at)
+      percent:quota?.remaining_percent, minutes:quota?.window_minutes, reset:Date.parse(quota?.resets_at),
+      cycleStart:Date.parse(quota?.cycle_started_at), cycleStatus:quota?.cycle_status,
+      cycleTokens:usageCount(quota?.cycle_tokens), cycleEstimate:usageCount(quota?.cycle_estimated_tokens),
+      previous:quota?.previous_cycle, comparison:quota?.cycle_comparison
     })).filter(({percent,minutes,reset}) => Number.isFinite(percent) && percent>=0 && percent<=100 &&
       Number.isInteger(minutes) && minutes>0 && reset>now);
+    for (const closed of usage?.quota_closed_windows ?? []) {
+      if ([300,10080].includes(closed.window_minutes) && closed.previous_cycle &&
+          !windows.some(window => window.minutes===closed.window_minutes)) {
+        windows.push({minutes:closed.window_minutes, previous:closed.previous_cycle, closed:true});
+      }
+    }
+    windows.sort((a,b) => a.minutes-b.minutes);
     let nextUpdate = Infinity;
+    byId('usage-cycle-note').hidden = !windows.some(window =>
+      window.cycleEstimate!==null || usageCount(window.previous?.cycle_estimated_tokens)!==null);
+    const tolerance = windows.find(window => Number.isFinite(window.comparison?.tolerance_percent))?.comparison.tolerance_percent;
+    const comparisonNote = byId('usage-comparison-note');
+    comparisonNote.hidden = tolerance===undefined;
+    if (!comparisonNote.hidden) usageText(comparisonNote,t('两次估算各留 ±{0} 的经验误差。区间重叠算接近，分开才提示可能增减。',
+      usagePercent.format(tolerance/100)));
     for (const [index,row] of quotaRows.entries()) {
       const window = windows[index];
       row.hidden = index>0 && !window;
@@ -3180,7 +3329,13 @@
     const note = row.querySelector('.usage-plan-note');
     const countdown = row.querySelector('.usage-plan-countdown');
     const progress = row.querySelector('progress');
-    countdown.hidden = progress.hidden = !window;
+    const cycle = row.querySelector('.usage-plan-cycle');
+    cycle.hidden = !window || !Number.isFinite(window.cycleStart);
+    if (!cycle.hidden) renderQuotaCycle(cycle,window);
+    const previous = row.querySelector('.usage-plan-previous');
+    previous.hidden = cycle.hidden && !window?.closed;
+    if (!previous.hidden) renderPreviousQuotaCycle(previous,window);
+    countdown.hidden = progress.hidden = !window || !!window.closed;
     if (!window) {
       usageText(label,t('套餐余量'));
       usageText(amount,'—');
@@ -3188,9 +3343,14 @@
       return Infinity;
     }
     const {percent,minutes,reset} = window;
+    usageText(label,t(minutes===300 ? '5 小时额度剩余' : minutes===10080 ? '周额度剩余' : '套餐余量'));
+    if (window.closed) {
+      usageText(amount,'—');
+      usageText(note,t('等待新周期额度记录'));
+      return Infinity;
+    }
     const remaining = reset-now;
     if (progress.value!==percent) progress.value = percent;
-    usageText(label,t(minutes===300 ? '5 小时额度剩余' : minutes===10080 ? '周额度剩余' : '套餐余量'));
     usageText(amount,usagePercent.format(percent/100));
     const period = minutes%1440===0 ? t('{0} 天',minutes/1440)
       : minutes%60===0 ? t('{0} 小时',minutes/60) : t('{0} 分钟',minutes);
@@ -3204,6 +3364,84 @@
     parts.push(t('{0} 分钟',minutesLeft%60));
     usageText(countdown,t('重置倒计时 {0}',parts.join(' ')));
     return remaining-(minutesLeft-1)*60_000;
+  }
+
+  function renderQuotaCycle(cycle,window) {
+    cycle.replaceChildren();
+    cycle.title = t('周期开始于 {0}',usageResetTime.format(window.cycleStart));
+    if (window.cycleStatus==='loading') {
+      usageText(cycle,t('正在读取本周期用量…'));
+      return;
+    }
+    const used = document.createElement('span');
+    const usedNumber = document.createElement('strong');
+    usedNumber.textContent = usageFormat(window.cycleTokens)+' tokens';
+    const label = window.cycleStatus==='partial' ? '本周期已记录' : '本周期本机已用';
+    used.append(t(label)+' ',usedNumber);
+    cycle.append(used);
+    if (window.cycleEstimate!==null) {
+      const capacity = document.createElement('span');
+      const estimate = document.createElement('strong');
+      estimate.textContent = '≈ '+compactUsageNumber.format(window.cycleEstimate)+' tokens';
+      estimate.title = usageFormat(window.cycleEstimate)+' tokens';
+      capacity.append(t('按当前用法估算容量')+' ',estimate);
+      cycle.append(capacity);
+    }
+  }
+
+  function renderPreviousQuotaCycle(row,{previous,comparison,cycleStatus,closed}) {
+    row.replaceChildren();
+    row.removeAttribute('title');
+    if (!previous) {
+      usageText(row,t(cycleStatus==='loading' ? '正在读取上周期记录…' : '本机暂无可对比的上周期记录'));
+      return;
+    }
+    const reset = Date.parse(previous.resets_at);
+    if (Number.isFinite(reset)) {
+      const label = document.createElement('span');
+      label.textContent = t('上次有记录的周期 · {0} 结束',usageResetTime.format(reset));
+      row.append(label);
+    }
+    if (previous.cycle_status==='loading') {
+      row.append(t('正在读取上周期记录…'));
+      return;
+    }
+    const observed = document.createElement('span');
+    observed.textContent = t(previous.cycle_status==='partial' ? '本机记录 {0} tokens（部分）' : '本机记录 {0} tokens',
+      usageFormat(usageCount(previous.cycle_tokens)));
+    row.append(observed);
+    const sampledAt = Date.parse(previous.sampled_at);
+    if (Number.isFinite(previous.used_percent) && Number.isFinite(sampledAt)) {
+      const used = document.createElement('span');
+      used.textContent = t('末次已用 {0}',usagePercent.format(previous.used_percent/100));
+      used.title = t('记录于 {0}',usageResetTime.format(sampledAt));
+      row.append(used);
+    }
+    const estimate = usageCount(previous.cycle_estimated_tokens);
+    if (estimate!==null) {
+      const capacity = document.createElement('span');
+      const amount = document.createElement('strong');
+      amount.textContent = '≈ '+compactUsageNumber.format(estimate)+' tokens';
+      const basisTime = Date.parse(previous.basis_sampled_at);
+      amount.title = Number.isFinite(basisTime) && Number.isFinite(previous.basis_used_percent)
+        ? t('{0} tokens；估算依据：{1} 的 {2} tokens ÷ {3}',usageFormat(estimate),usageResetTime.format(basisTime),
+          usageFormat(usageCount(previous.basis_tokens)),usagePercent.format(previous.basis_used_percent/100))
+        : usageFormat(estimate)+' tokens';
+      capacity.append(t('上周期估算容量')+' ',amount);
+      row.append(capacity);
+    }
+    const result = document.createElement('span');
+    result.className = 'usage-cycle-comparison';
+    const label = {lower:'可能缩小',higher:'可能增加',similar:'接近上周期'}[comparison?.status];
+    if (label && Number.isFinite(comparison.change_percent)) {
+      result.dataset.status = comparison.status;
+      const delta = comparison.change_percent/100;
+      const change = (delta>=.0005 ? '+' : delta<=-.0005 ? '−' : '')+usagePercent.format(Math.abs(delta));
+      result.textContent = t('{0} · 估算差 {1}',t(label),change);
+    } else if (!closed) {
+      result.textContent = t('暂不能比较容量');
+    }
+    if (result.textContent) row.append(result);
   }
 
   function showUsageView(visible) {
@@ -3246,7 +3484,11 @@
     usageText(byId('office-tokens-today'),today===null ? '—' : compactUsageNumber.format(today)+' tokens');
     usageText(byId('office-token-rate'),rate===null ? '—' : compactUsageNumber.format(rate)+'/min');
     byId('office-tokens-today').title = usageFormat(today)+(todayStatus==='partial'?t('（部分日志）'):'');
+    const liveCost = estimatedUsageCost(rate,usage?.live_estimated_usd,usage?.live_priced_tokens,status==='partial');
     byId('office-token-rate').title = usageFormat(rate)+(status==='partial'?t('（部分日志）'):'');
+    const liveMoney = byId('office-token-rate-cost');
+    liveMoney.hidden = !liveCost || !rate;
+    renderUsageMoney(liveMoney,liveCost);
     usageText(byId('office-cost-today'),displayCost ?? '—');
     byId('office-cost-today').title = usageCost(todayCost);
     if (showingUsage) {

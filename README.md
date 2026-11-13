@@ -4,7 +4,9 @@ English · [简体中文](README.zh-CN.md)
 
 Codex Office is a macOS menu bar app that shows local Codex chats in a two-floor 3D office. It reads session logs and desktop metadata directly from your Mac. The app does its work locally and does not need a separate service, account, or API key.
 
-Open the built app directly. Running it requires no Python, Apple Command Line Tools, or `zstd` installation. Building from source requires the Apple Command Line Tools with the macOS 26 SDK or later.
+Download the DMG from [GitHub Releases](https://github.com/anduin-agent/codex-office/releases/latest), open it, and drag Codex Office into Applications. The app supports macOS 12 or later on Apple silicon and macOS 13 or later on Intel. It runs without Python, Apple Command Line Tools, or `zstd`.
+
+Building from source requires Apple Command Line Tools with the macOS 26 SDK or later.
 
 ```sh
 make mac-office
@@ -17,9 +19,15 @@ The menu bar shows the number of running main chats. When chats are waiting for 
 
 Use the Office and Usage tabs below the token summary to switch views. Hover over a bar for the date, tokens and estimated API cost. Select a bar to see its daily chat ranking. Usage is calculated on this Mac from Codex session logs and archives. A built-in Zstandard decoder reads compressed archives. Usage shows the current quota windows from the latest logged allowance, with the 5-hour window above the weekly window when both are available. The menu bar quota shows the longest active window.
 
+The weekly and five-hour quota rows show local tokens recorded since the start of each cycle. Capacity is extrapolated from the local token count and the quota percentage at the same time. The estimate reflects the current usage mix. Incomplete data, usage below 5%, and exhausted quotas show the observed count alone. The five-hour row appears when the local log has an active window.
+
 Choose **Usage details** to open a resizable window with date, project and model filters. Select a session to see the tokens attributed to each model in the selected range. The app reads Codex logs and session metadata through its Swift collector. It needs no Python process or local web service. A separate personal dashboard can continue collecting from the same Codex logs while retaining its own historical database and other sources.
 
-The summary includes today's estimated API cost, and the Usage tab shows the highest-usage day in the last 30 days and its estimated cost. Select a day to see its recorded input and output tokens and the share of recorded input tokens served from cache.
+Usage rankings sort by the combined tokens of each main chat, its subagents, and any linked automatic reviews. Expand a group to see each session's own usage, or collapse all groups at once. Reviews with no verified parent appear together under Unassigned automatic reviews.
+
+The summary includes today's estimated API cost. The Usage tab totals all readable local history, while the chart and peak day cover the last 30 days. Select a day to see input and output tokens and the share of recorded input tokens served from cache. The amounts beside token counts are API list-price equivalents in USD. Actual charges may differ.
+
+When local logs report weekly or 5-hour quotas, Usage shows the local usage and estimated capacity of the current and last recorded cycle for each window. The previous cycle's token count stops at reset. Its capacity uses the last usable snapshot for the same account: local tokens through that snapshot divided by the usage percentage at that time (at least 5%, below 100%). Each estimate has a ±15% tolerance; overlapping ranges are considered close, while separated ranges suggest a possible decrease or increase. No comparison is made with insufficient data or different recorded plans. Models, tasks, and usage on other devices can affect the estimate.
 
 Estimates use [OpenAI's standard API rates](https://developers.openai.com/api/docs/pricing) in USD and indicate partial coverage when some tokens cannot be priced. The app ships with a local rate table and checks the public pricing page at most once per local day while the panel is open. It keeps the last usable rates if the refresh fails.
 

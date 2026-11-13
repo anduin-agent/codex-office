@@ -39,6 +39,7 @@
     </form>
 
     <p id="usage-status" role="status"></p>
+    <p id="usage-cost-note" data-text="costNote">按 API 标价折算的名义费用（USD），不代表实际扣费。</p>
     <div class="results">
       <section class="session-results" aria-labelledby="usage-results-title">
         <div class="results-header">
@@ -46,7 +47,13 @@
             <h2 id="usage-results-title" data-text="sessions">会话用量</h2>
             <p id="usage-session-count"></p>
           </div>
-          <strong id="usage-total-tokens">—</strong>
+          <div class="results-controls">
+            <div class="usage-amount">
+              <strong id="usage-total-tokens">—</strong>
+              <small id="usage-total-cost" class="usage-cost">—</small>
+            </div>
+            <button id="usage-toggle-groups" type="button" aria-controls="usage-session-list" hidden>全部收起</button>
+          </div>
         </div>
         <ul id="usage-session-list" role="list"></ul>
         <div id="usage-pagination" class="actions" hidden>
@@ -62,7 +69,10 @@
         </div>
         <h3 id="session-title" tabindex="-1"></h3>
         <dl>
-          <div><dt data-text="selectedTokens">筛选范围内的 Token</dt><dd id="session-tokens"></dd></div>
+          <div>
+            <dt id="session-token-label" data-text="selectedTokens">筛选范围内的 Token</dt>
+            <dd class="usage-amount"><span id="session-tokens"></span><small id="session-cost" class="usage-cost">—</small></dd>
+          </div>
           <div><dt data-text="dateRange">日期范围</dt><dd id="session-date-range"></dd></div>
           <div><dt data-text="project">项目</dt><dd id="session-project"></dd></div>
           <div><dt data-text="models">模型</dt><dd id="session-models"></dd></div>

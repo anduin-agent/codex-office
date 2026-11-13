@@ -1,0 +1,3460 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+  <link rel="stylesheet" href="office-dropdown.css">
+  <title>Codex Office</title>
+  <script>
+    if (window.officeNativeToolbar === true) document.documentElement.classList.add('native-toolbar');
+  </script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --text: light-dark(#262745, #eff0ff);
+      --muted: light-dark(#5c5d76, #b4b4d1);
+      --window: light-dark(#f7f7fc, #22243b);
+      --panel: light-dark(#fff, #2b2d47);
+      --line: light-dark(#e0e1ef, #444660);
+      --accent: light-dark(#5247a9, #cabfff);
+      --active: light-dark(#eae6ff, #44376c);
+      --mint: light-dark(#14785f, #91ebc5);
+      --amber: light-dark(#9d541c, #ffd09c);
+      --edit-accent: light-dark(#78511b, #ffe4ac);
+      --edit-fill: light-dark(#fff1c8, #573e23);
+      --aura: light-dark(#ddd9fa, #3e375e);
+      --outgoing: light-dark(#7443de, #af93ff);
+      --incoming: light-dark(#00836e, #7bf4d0);
+      font: 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: var(--window);
+      color: var(--text);
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { display: flex; flex-direction: column; min-height: 370px; height: 100dvh; margin: 0; }
+    .native-toolbar body { min-height: 0; }
+    button, select { font: inherit; color: var(--text); }
+    button, select {
+      background: var(--window); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px;
+    }
+    button:enabled { cursor: pointer; }
+    button:enabled:hover { background: var(--active); }
+    button:focus-visible, select:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    button:disabled { opacity: .45; }
+    .bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel); }
+    header.bar { border-bottom: 1px solid var(--line); }
+    .native-toolbar header.bar { display: none; }
+    header strong { font-size: 15px; flex: none; white-space: nowrap; }
+    #source { color: var(--muted); font-size: 11px; }
+    #source[data-status="unavailable"], #source[data-status="partial"] { color: var(--amber); }
+    #source[data-running="true"] { color: light-dark(#005cc5, #80baff); font-weight: 650; }
+    #waiting-count, .wait-marker {
+      background: var(--edit-fill); color: var(--edit-accent); font-weight: 650; white-space: nowrap;
+      border: 1px solid color-mix(in srgb, var(--amber) 42%, var(--edit-fill));
+    }
+    #waiting-count:enabled:hover { background: color-mix(in srgb, var(--amber) 15%, var(--edit-fill)); }
+    #collaboration { margin-left: auto; white-space: nowrap; }
+    .office-usage-summary {
+      display: grid; flex: none; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center;
+      min-height: 62px; margin: 0; padding: 8px 0; color: var(--muted); background: var(--window);
+      border-bottom: 1px solid var(--line);
+    }
+    .office-usage-summary > div { padding: 0 12px; }
+    .office-usage-summary > div + div { border-inline-start: 1px solid var(--line); }
+    .office-usage-summary dt { font-size: 11px; }
+    .office-usage-summary dd { margin: 2px 0 0; }
+    .office-usage-summary strong { color: var(--text); font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #office-token-rate { color: var(--mint); }
+    #office-cost-today { color: var(--accent); }
+    .view-tabs {
+      display: flex; flex: none; gap: 5px; padding: 6px 12px; background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+    .view-tabs button {
+      min-width: 65px; min-height: 28px; padding: 3px 10px; border-radius: 999px;
+      background: var(--window); color: var(--muted); font-weight: 600;
+    }
+    .view-tabs button:hover, .view-tabs button[aria-pressed="true"] {
+      border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); background: var(--active); color: var(--accent);
+    }
+    .icon-button { display: grid; place-items: center; width: 30px; height: 29px; padding: 0; }
+    .icon-button svg { width: 16px; height: 16px; }
+    .stage {
+      --aura-strength: 72%;
+      flex: 1; min-height: 240px; position: relative; isolation: isolate; overflow: hidden;
+      user-select: none;
+      background: radial-gradient(ellipse at 50% 49%, color-mix(in srgb, var(--aura) var(--aura-strength), transparent), transparent 71%);
+    }
+    .native-toolbar .stage { --aura-strength: 38%; }
+    canvas, .annotations, .packets, .agent-links { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .annotations, .packets, .agent-links { pointer-events: none; }
+    .marker {
+      position: absolute; margin: 0; padding: 3px 5px; white-space: nowrap;
+      font-size: 10px; line-height: 1.25; border: 0; border-radius: 5px;
+      color: var(--text); background: var(--panel); transform: translate(-50%, -50%);
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .floor-marker { padding: 4px 7px; font-size: 11px; font-weight: 650; color: var(--accent); background: var(--active); }
+    .floor-marker[data-floor="work"] { background: color-mix(in srgb, var(--mint) 15%, var(--panel)); color: var(--mint); }
+    .project-marker {
+      background: none; font-weight: 650;
+      text-shadow: 0 1px 4px var(--window), 0 0 8px var(--window);
+    }
+    .project-marker[data-highlighted="true"], .change-marker {
+      background: var(--edit-fill); color: var(--edit-accent); text-shadow: none;
+    }
+    .change-marker { font-weight: 650; }
+    .wait-marker { z-index: 1; }
+    .chat-marker {
+      pointer-events: auto;
+      box-shadow: 0 1px 5px color-mix(in srgb, var(--text) 14%, transparent);
+    }
+    .chat-name { display: block; overflow: hidden; text-overflow: ellipsis; }
+    .chat-name::before {
+      content: ""; display: inline-block; vertical-align: middle; margin-right: 4px;
+      width: 5px; height: 5px; border-radius: 50%; background: var(--mint);
+    }
+    .chat-marker[data-status="completed"] .chat-name::before { background: var(--accent); }
+    .chat-marker[data-status="waiting"] .chat-name::before, .chat-marker[data-status="interrupted"] .chat-name::before,
+    .chat-marker[data-status="unknown"] .chat-name::before { background: var(--amber); }
+    .chat-marker[aria-pressed="true"] { background: var(--active); color: var(--accent); }
+    #chat-title-tooltip {
+      position: fixed; z-index: 3; pointer-events: none;
+      max-width: min(340px, calc(100vw - 16px)); overflow-wrap: anywhere;
+      padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px;
+      color: var(--text); background: var(--panel); font-size: 12px; line-height: 1.4;
+      box-shadow: 0 3px 12px color-mix(in srgb, var(--text) 18%, transparent);
+    }
+    .chat-team {
+      display: flex; justify-content: center; align-items: center; gap: 2px;
+      margin-top: 3px; color: var(--accent); font: 650 9px/10px system-ui, sans-serif;
+    }
+    .agent-flow {
+      position: relative; display: flex; align-items: center; gap: 3px;
+      padding-left: 5px; flex: none;
+    }
+    .agent-flow::before {
+      content: ""; position: absolute; top: 50%; left: 0; right: 3px;
+      border-top: 1px solid currentColor; opacity: .65;
+    }
+    .agent-node {
+      position: relative; width: 7px; height: 6px; border-radius: 2px;
+      border: 1px solid currentColor; background: var(--panel);
+    }
+    .agent-node[data-status="waiting"] { color: var(--amber); background: var(--edit-fill); }
+    .agent-link {
+      position: absolute; height: 2px; transform-origin: left center;
+      border-top: 2px dashed currentColor; color: var(--incoming);
+    }
+    .agent-link[data-status="waiting"] { border-top-style: solid; color: var(--amber); }
+    @media (prefers-reduced-motion: no-preference) {
+      .stage[data-visible="true"] .agent-flow[data-running="true"]::after {
+        content: ""; position: absolute; z-index: 1; width: 3px; height: 3px;
+        top: calc(50% - 1px); border-radius: 50%; background: currentColor;
+        box-shadow: 0 0 3px currentColor; animation: agent-signal 2.1s ease-in-out infinite;
+      }
+      .stage[data-visible="true"] .agent-link[data-status="running"]::after {
+        content: ""; position: absolute; top: -3px; left: 0; width: 5px; height: 5px;
+        border-radius: 50%; background: currentColor; box-shadow: 0 0 5px currentColor;
+        animation: agent-signal 1.75s ease-in-out infinite;
+      }
+      .agent-link:nth-child(even)::after { animation-delay: .6s; }
+    }
+    @keyframes agent-signal {
+      0% { left: 0; opacity: 0; }
+      15% { opacity: 1; }
+      70% { left: calc(100% - 4px); opacity: .9; }
+      78%, 100% { left: calc(100% - 4px); opacity: 0; }
+    }
+    .hub-marker { background: var(--active); color: var(--accent); font-weight: 650; }
+    .hub-marker .chat-name::before { background: var(--accent); }
+    .packet {
+      position: absolute; width: 7px; height: 7px; border-radius: 50%; background: white;
+      border: 1px solid var(--outgoing); box-shadow: 0 0 7px 2px var(--outgoing);
+      transform: translate(-50%, -50%);
+    }
+    .packet[data-returning="true"] { border-color: var(--incoming); box-shadow: 0 0 7px 2px var(--incoming); }
+    footer.bar { border-top: 1px solid var(--line); min-height: 55px; }
+    .native-toolbar footer.bar { background: color-mix(in srgb, var(--panel) 78%, transparent); }
+    #detail { min-width: 0; flex: 1; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    #detail strong, #detail span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #detail strong { color: var(--text); font-size: 12px; }
+    #detail span[data-status="waiting"] { color: var(--amber); }
+    .pages {
+      display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; padding: 0 8px 8px;
+      color: var(--muted); font-size: 11px;
+    }
+    .page { display: flex; align-items: center; gap: 6px; }
+    .page button { padding: 1px 8px; font-size: 15px; line-height: 1.2; }
+    dialog {
+      color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px; width: min(520px, calc(100% - 30px)); max-height: calc(100% - 32px);
+      box-shadow: 0 12px 35px color-mix(in srgb, var(--text) 20%, transparent);
+    }
+    dialog::backdrop { background: rgba(20, 22, 39, .32); }
+    .dialog-title, .dialog-actions, .receipt-row { display: flex; align-items: center; gap: 8px; }
+    .dialog-title { justify-content: space-between; margin-bottom: 12px; }
+    .dialog-title h1 { margin: 0; font-size: 15px; }
+    .dialog-actions { margin-top: 12px; justify-content: flex-end; }
+    dialog label[for], .dialog-label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 11px; }
+    dialog select { display: block; width: 100%; }
+    #executor-picker, #receipts { max-height: min(35vh, 228px); overflow: auto; }
+    .executor-row, .receipt-row { min-height: 34px; border-bottom: 1px solid var(--line); }
+    .executor-row { display: flex; align-items: center; gap: 6px; }
+    .executor-row span, .receipt-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .receipt-row button, .receipt-row .executor-status, .receipt-row .receipt-status { flex-shrink: 0; }
+    .receipt-row .who { text-align: left; border: 0; background: none; padding-left: 0; }
+    .executor-status { color: var(--muted); font-size: 11px; }
+    .receipt-status { color: var(--amber); font-size: 11px; }
+    .receipt-status[data-received="true"] { color: var(--mint); }
+    .primary { background: var(--active); color: var(--accent); }
+    .dialog-note { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+    #coordinator-chat { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #coordinator-label[hidden] + #coordinator-chat { margin-top: 8px; }
+    #office-settings { width: min(535px, calc(100% - 24px)); padding: 16px 18px; }
+    #office-settings[open] { display: flex; flex-direction: column; overflow: hidden; }
+    #office-settings .dialog-title, #office-settings .dialog-actions { flex-shrink: 0; }
+    #office-settings-form { display: flex; flex-direction: column; min-height: 0; }
+    .settings-fields { min-height: 0; overflow: auto; margin: 0 -4px; padding: 4px; }
+    #office-settings fieldset { display: grid; gap: 14px; margin: 0; padding: 0; border: 0; min-width: 0; }
+    .settings-choice { display: grid; gap: 5px; min-width: 0; }
+    .setting-heading { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .setting-heading > label[for] { margin: 0; }
+    .setting-help {
+      display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; padding: 0;
+      border-radius: 50%; color: var(--muted); font-size: 11px; font-weight: 650;
+    }
+    .assignment-setting { position: relative; }
+    .assignment-setting summary { padding-inline-end: 26px; }
+    .assignment-setting > .setting-help { position: absolute; inset-block-start: 0; inset-inline-end: 0; }
+    .dialog-help-tooltip {
+      position: fixed; z-index: 3; max-width: min(290px, calc(100vw - 16px)); padding: 7px 9px;
+      color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 20%, transparent);
+      font-size: 12px; line-height: 1.45; white-space: pre-line;
+    }
+    #office-settings label { display: grid; gap: 5px; margin: 0; color: var(--text); font-weight: 600; }
+    #office-settings small, #office-settings summary { color: var(--muted); font-weight: 400; }
+    #office-settings input:not([type="checkbox"]), #office-settings textarea {
+      width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px;
+      background: var(--window); color: var(--text); font: inherit; padding: 7px 9px;
+    }
+    #office-settings textarea { margin-top: 6px; font: 11px ui-monospace, monospace; resize: vertical; }
+    #visible-section-list {
+      display: grid; gap: 4px; max-height: min(24vh, 144px); overflow: auto;
+      margin-top: 5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+    }
+    #office-settings .section-option { display: flex; align-items: center; gap: 6px; font-weight: 400; }
+    .section-option input { flex-shrink: 0; accent-color: var(--accent); }
+    .section-option span { overflow-wrap: anywhere; }
+    #visible-section-note { display: block; margin-top: 5px; }
+    .alias-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+    .alias-row { display: grid; grid-template-columns: minmax(0, 2fr) auto minmax(0, 1fr) auto; gap: 6px; margin-top: 6px; }
+    .alias-directory + .office-dropdown { gap: 6px; }
+    #settings-feedback { min-height: 1.4em; margin: 0 auto 0 0; color: var(--muted); }
+    #settings-feedback[data-error] { color: var(--amber); }
+    .app-settings { display: grid; gap: 7px; margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+    .app-settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; }
+    .app-settings-row button { margin-inline-start: auto; }
+    #office-version { font-variant-numeric: tabular-nums; }
+    #office-settings .login-item-choice { display: inline-flex; align-items: center; gap: 6px; }
+    .login-item-choice input { accent-color: var(--accent); }
+    #office-view { display: contents; }
+    #usage-panel { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; background: var(--panel); }
+    #usage-panel h2, #usage-panel h3 { margin: 0; font-size: 12px; }
+    .usage-live {
+      display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 14px;
+      padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--window);
+    }
+    .usage-rate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin: 3px 0 0; }
+    #usage-rate { color: var(--mint); font-size: 24px; font-weight: 650; letter-spacing: -.025em; }
+    .usage-rate span, .usage-status, .usage-empty, .usage-range, .usage-axis {
+      color: var(--muted); font-size: 11px; line-height: 1.4;
+    }
+    .usage-status, .usage-empty { margin: 5px 0 0; }
+    .usage-status[data-status="partial"], .usage-status[data-status="unavailable"] { color: var(--amber); }
+    .usage-tally { font-variant-numeric: tabular-nums; }
+    .usage-plan { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 9px 0 0; }
+    .usage-plan-percent { color: var(--accent); }
+    .usage-plan-countdown { color: var(--accent); font-weight: 650; }
+    .usage-plan progress {
+      -webkit-appearance: none; appearance: none; flex: 0 0 100%;
+      width: 100%; height: 6px; margin-top: 2px; border: 0; border-radius: 6px;
+      overflow: hidden; background: var(--line);
+    }
+    .usage-plan progress::-webkit-progress-bar { background: var(--line); }
+    .usage-plan progress::-webkit-progress-value { background: var(--accent); border-radius: 6px; }
+    #usage-recent { list-style: none; margin: 2px -4px 0; padding: 0 4px; max-height: 76px; overflow: auto; }
+    #usage-recent button {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+      width: 100%; min-height: 24px; padding: 3px 4px; border: 0; background: none; text-align: left;
+      font-size: 11px;
+    }
+    #usage-recent button:hover, #usage-recent button:focus-visible { background: var(--active); }
+    #usage-recent button:focus-visible { outline-offset: -2px; }
+    #usage-recent button span:first-child { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    #usage-recent .usage-tally { color: var(--muted); white-space: nowrap; }
+    .usage-history { margin-top: 13px; }
+    .usage-history-heading { display: flex; align-items: center; gap: 8px; }
+    #open-usage-detail { color: var(--accent); border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .usage-heading, .usage-axis { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .usage-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 8px 0 10px; }
+    .usage-metrics > div { padding: 6px 8px; border-radius: 7px; background: var(--window); }
+    .usage-metrics dt { color: var(--muted); font-size: 11px; }
+    .usage-metrics dd { margin: 2px 0 0; font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
+    .usage-metrics dd.usage-metric-note { color: var(--muted); font-size: 11px; font-weight: 400; }
+    #usage-peak { color: var(--accent); }
+    .usage-breakdown { margin: 8px 0 0; }
+    .usage-breakdown dd { font-size: 14px; }
+    .usage-chart { margin: 0; }
+    .usage-chart figcaption { min-height: 1.3em; margin-bottom: 4px; color: var(--text); font-size: 11px; }
+    #usage-history-placeholder {
+      height: 96px; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px;
+      background: var(--window);
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      #usage-history-placeholder {
+        background: linear-gradient(100deg, var(--window) 36%, var(--line) 50%, var(--window) 64%) 0 0 / 240% 100%;
+        animation: usage-history-loading 1.4s ease-in-out infinite;
+      }
+    }
+    @keyframes usage-history-loading { from { background-position: 100% 0; } to { background-position: 0 0; } }
+    #usage-bars {
+      display: grid; grid-template-columns: repeat(30, minmax(0, 1fr)); gap: 3px; height: 96px;
+      border-bottom: 1px solid var(--line);
+    }
+    #usage-bars button {
+      display: flex; align-items: end; justify-content: center; width: 100%; height: 100%;
+      border: 0; border-radius: 3px; padding: 0 1px 2px; background: none;
+    }
+    #usage-bars button span {
+      width: 100%; min-height: 2px; height: var(--bar-height, 0%); border-radius: 2px 2px 0 0;
+      background: var(--accent); opacity: .65;
+    }
+    #usage-bars button[data-amount="zero"] span { background: var(--muted); opacity: .45; }
+    #usage-bars button[data-amount="missing"] span { border-bottom: 1px dotted var(--muted); background: none; }
+    #usage-bars button:hover span, #usage-bars button[aria-pressed="true"] span { opacity: 1; }
+    #usage-bars button:focus-visible { outline: none; }
+    #usage-bars button:focus-visible span { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .usage-axis { margin-top: 4px; }
+    #usage-tooltip {
+      position: fixed; z-index: 4; pointer-events: none; white-space: normal;
+      max-width: min(260px, calc(100vw - 16px)); padding: 7px 9px;
+      color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      box-shadow: 0 4px 15px color-mix(in srgb, var(--text) 18%, transparent); font-size: 11px;
+    }
+    #usage-tooltip span { display: block; margin-top: 3px; }
+    .usage-ranking { margin-top: 14px; }
+    #usage-ranking { margin: 5px 0 0; padding: 0; list-style: none; }
+    #usage-ranking button {
+      display: flex; justify-content: space-between; gap: 12px; width: 100%;
+      border: 0; background: transparent; padding: 5px 6px; text-align: left;
+    }
+    #usage-ranking button:hover { background: var(--active); }
+    #usage-ranking button span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #usage-ranking .usage-tally { white-space: nowrap; color: var(--muted); }
+    @media (max-width: 480px) {
+      .usage-live { grid-template-columns: 1fr; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <strong>Codex Office</strong>
+    <span id="source" role="status">等待本机快照</span>
+    <button id="waiting-count" type="button" title="依次定位等你确认的聊天" hidden></button>
+    <button id="collaboration" type="button" title="查看统筹聊天向其他项目派发的任务和回执">跨项目协作</button>
+    <button id="show-settings" class="icon-button" type="button" aria-label="办公室设置" title="办公室设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="var(--window)"/>
+        <circle cx="15" cy="12" r="2" fill="var(--window)"/><circle cx="11" cy="17" r="2" fill="var(--window)"/>
+      </svg>
+    </button>
+  </header>
+  <dl class="office-usage-summary">
+    <div><dt>今日用量</dt><dd><strong id="office-tokens-today">—</strong></dd></div>
+    <div><dt>Token 速度</dt><dd><strong id="office-token-rate">—</strong></dd></div>
+    <div><dt>API 估算</dt><dd><strong id="office-cost-today">—</strong></dd></div>
+  </dl>
+  <div class="view-tabs" role="group" aria-label="面板视图">
+    <button id="show-office" type="button" aria-controls="office-view" aria-pressed="true">办公室</button>
+    <button id="show-usage" type="button" aria-controls="usage-panel" aria-pressed="false">用量</button>
+  </div>
+  <div id="office-view">
+  <main class="stage" aria-label="上层是项目工位，下层是临时工作工位">
+    <canvas id="webgl" aria-hidden="true"></canvas>
+    <canvas id="fallback" aria-hidden="true" hidden></canvas>
+    <div class="agent-links" aria-hidden="true"></div>
+    <div class="packets" aria-hidden="true"></div>
+    <div class="annotations"></div>
+  </main>
+  <div class="pages" hidden>
+    <div class="page" data-floor="project" hidden>
+      <button type="button" data-step="-1" aria-label="上一页项目工位">‹</button>
+      <span></span>
+      <button type="button" data-step="1" aria-label="下一页项目工位">›</button>
+    </div>
+    <div class="page" data-floor="work" hidden>
+      <button type="button" data-step="-1" aria-label="上一页临时工作工位">‹</button>
+      <span></span>
+      <button type="button" data-step="1" aria-label="下一页临时工作工位">›</button>
+    </div>
+  </div>
+  <footer class="bar">
+    <div id="detail" aria-live="polite"></div>
+  </footer>
+  </div>
+  <div id="chat-title-tooltip" aria-hidden="true" hidden></div>
+  <dialog id="collaboration-panel" aria-labelledby="collaboration-title">
+    <div class="dialog-title">
+      <div class="setting-heading">
+        <h1 id="collaboration-title">跨项目协作</h1>
+        <button class="setting-help" type="button" aria-label="跨项目协作说明" aria-describedby="collaboration-help">?</button>
+      </div>
+      <button id="dismiss-collaboration" type="button" autofocus>关闭窗口</button>
+    </div>
+    <div id="collaboration-help" hidden>
+      <p>自动识别：在设置中指定统筹分区后，Office 从本机 Codex 日志读取已成功的任务派发。</p>
+      <p>手动记录派发：自行选择统筹聊天和各项目的执行聊天。Office 只保存协作关系和回执，不会发送消息或启动任务。</p>
+    </div>
+    <div id="collaboration-help-tooltip" class="dialog-help-tooltip" aria-hidden="true" hidden></div>
+    <div id="coordination-picker" hidden>
+      <label for="group-picker">统筹聊天</label>
+      <select id="group-picker"></select>
+    </div>
+    <p id="coordination-note" class="dialog-note" hidden></p>
+    <form id="link-form">
+      <label for="coordinator-picker">统筹聊天</label>
+      <select id="coordinator-picker"></select>
+      <div class="dialog-label">执行聊天</div>
+      <div id="executor-picker"></div>
+      <p class="dialog-note">从至少两个项目选择执行聊天。派发与回执记录保存在本机。</p>
+      <div class="dialog-actions"><button class="primary" type="submit" disabled>记录派发</button></div>
+    </form>
+    <div id="active-collaboration" hidden>
+      <div id="coordinator-label" class="dialog-label">统筹聊天</div>
+      <button type="button" id="coordinator-chat"></button>
+      <div class="dialog-label">执行聊天与回执</div>
+      <p id="no-dispatches" class="dialog-note" hidden>暂无已记录的派发。</p>
+      <div id="receipts"></div>
+      <div id="manual-actions" class="dialog-actions"><button id="end-collaboration" type="button">结束协作</button></div>
+    </div>
+  </dialog>
+  <dialog id="office-settings" aria-labelledby="office-settings-title">
+    <div class="dialog-title">
+      <h1 id="office-settings-title">办公室设置</h1>
+      <button id="close-settings" type="button">返回</button>
+    </div>
+    <form id="office-settings-form">
+      <div class="settings-fields">
+        <div class="app-settings">
+          <div class="app-settings-row">
+            <span>版本</span><strong id="office-version">—</strong>
+            <button id="check-office-update" type="button" disabled>检查更新</button>
+          </div>
+          <small id="office-update-status" role="status" hidden></small>
+          <div class="app-settings-row" id="office-release-actions" hidden>
+            <button id="open-office-release" type="button">查看新版本</button>
+          </div>
+          <div class="app-settings-row">
+            <label class="login-item-choice"><input id="office-login-item" type="checkbox" disabled><span>登录时启动</span></label>
+            <button id="open-office-login-items" type="button" hidden>打开登录项设置</button>
+          </div>
+          <small id="office-login-status" role="status" hidden></small>
+        </div>
+        <fieldset disabled>
+          <div class="settings-choice">
+            <label for="office-language">界面语言</label>
+            <select id="office-language" name="language">
+              <option value="zh-CN">简体中文</option>
+              <option value="en">English</option>
+              <option value="system">跟随系统</option>
+            </select>
+          </div>
+          <div class="settings-choice">
+            <div class="setting-heading">
+              <label for="menu-bar-metric">菜单栏显示</label>
+              <button class="setting-help" type="button" aria-label="菜单栏显示说明" aria-describedby="help-menu-bar">?</button>
+            </div>
+            <select id="menu-bar-metric" name="menu_bar_metric">
+              <option value="today_tokens">今日 Token</option>
+              <option value="token_speed" selected>Token 速度</option>
+              <option value="plan_remaining">套餐余量</option>
+            </select>
+            <span id="help-menu-bar" hidden>选择菜单栏旁边显示的数据。机器人的步频始终跟随最近 1 分钟的 Token 速度。</span>
+          </div>
+          <div class="settings-choice">
+            <div class="setting-heading">
+              <label for="visible-section-mode">办公室显示分区</label>
+              <button class="setting-help" type="button" aria-label="办公室显示分区说明" aria-describedby="help-sections">?</button>
+            </div>
+            <select id="visible-section-mode" aria-controls="visible-section-list">
+              <option value="all">显示全部聊天</option>
+              <option value="selected">只显示所选分区</option>
+            </select>
+            <div id="visible-section-list" role="group" aria-label="选择 Codex 侧栏分区" hidden></div>
+            <small id="visible-section-note" role="status" hidden></small>
+            <span id="help-sections" hidden>按 Codex 侧栏分区筛选工位。可多选，也可选「未分区」。菜单栏计数和用量仍汇总所有聊天。</span>
+          </div>
+          <div class="settings-choice">
+            <div class="setting-heading">
+              <label for="coordination-section">统筹分区</label>
+              <button class="setting-help" type="button" aria-label="统筹分区说明" aria-describedby="help-coordination">?</button>
+            </div>
+            <input id="coordination-section" name="coordination_section" maxlength="128" placeholder="Codex 侧栏分区名称">
+            <span id="help-coordination" hidden>填写一个已有的 Codex 侧栏分区名，Office 会把其中的聊天识别为统筹聊天。留空关闭自动识别。</span>
+          </div>
+          <div>
+            <div class="alias-heading">
+              <div class="setting-heading">
+                <strong>项目别名</strong>
+                <button class="setting-help" type="button" aria-label="项目别名说明" aria-describedby="help-aliases">?</button>
+              </div>
+              <button id="add-alias" type="button">添加别名</button>
+            </div>
+            <div id="office-aliases"></div>
+            <span id="help-aliases" hidden>从 Codex 项目中选择目录，或点「浏览…」选择其他文件夹，再填写 Office 中显示的名称。</span>
+          </div>
+          <div class="assignment-setting">
+            <details>
+              <summary>高级：聊天归属</summary>
+              <textarea name="thread_projects" rows="4" aria-label="聊天归属 JSON"></textarea>
+            </details>
+            <button class="setting-help" type="button" aria-label="聊天归属说明" aria-describedby="help-assignments">?</button>
+            <span id="help-assignments" hidden>手动指定聊天的归属。JSON 的键是聊天 UUID，值是项目绝对路径；填写 null 归为临时工作。</span>
+          </div>
+        </fieldset>
+      </div>
+      <div class="dialog-actions">
+        <p id="settings-feedback" role="status"></p>
+        <button id="retry-settings" type="button" hidden>重试</button>
+      </div>
+    </form>
+    <div id="settings-help-tooltip" class="dialog-help-tooltip" aria-hidden="true" hidden></div>
+  </dialog>
+  <main id="usage-panel" aria-label="Token 用量" tabindex="-1" hidden>
+    <div class="usage-live">
+      <section aria-labelledby="usage-live-title">
+        <h2 id="usage-live-title">最近 1 分钟</h2>
+        <p class="usage-rate"><strong id="usage-rate" class="usage-tally">—</strong><span>tokens/min</span></p>
+        <p class="usage-status" id="usage-live-status" role="status">正在读取最近用量…</p>
+      </section>
+      <section aria-labelledby="usage-recent-title">
+        <h3 id="usage-recent-title">聊天用量</h3>
+        <p class="usage-empty" id="usage-recent-empty">正在读取…</p>
+        <ul id="usage-recent" role="list" hidden></ul>
+      </section>
+    </div>
+    <div class="usage-plan">
+      <span id="usage-plan-label" class="usage-plan-label">套餐余量</span>
+      <strong id="usage-plan-percent" class="usage-plan-percent usage-tally">—</strong>
+      <span id="usage-plan-note" class="usage-plan-note usage-range">本机暂无有效记录</span>
+      <span id="usage-plan-countdown" class="usage-plan-countdown usage-range usage-tally" hidden></span>
+      <progress id="usage-plan-progress" max="100" value="0" aria-labelledby="usage-plan-label" hidden></progress>
+    </div>
+    <div class="usage-plan" hidden>
+      <span id="usage-plan-second-label" class="usage-plan-label"></span>
+      <strong class="usage-plan-percent usage-tally"></strong>
+      <span class="usage-plan-note usage-range"></span>
+      <span class="usage-plan-countdown usage-range usage-tally" hidden></span>
+      <progress max="100" value="0" aria-labelledby="usage-plan-second-label" hidden></progress>
+    </div>
+    <section class="usage-history" aria-labelledby="usage-history-title">
+      <div class="usage-heading">
+        <div class="usage-history-heading">
+          <h2 id="usage-history-title">最近 30 天</h2>
+          <button id="open-usage-detail" type="button" hidden>详细用量</button>
+        </div>
+        <span class="usage-range" id="usage-coverage"></span>
+      </div>
+      <p class="usage-status" id="usage-history-status" role="status">正在读取本机历史…</p>
+      <div id="usage-history-placeholder" aria-hidden="true" hidden></div>
+      <div id="usage-history" hidden>
+        <dl class="usage-metrics">
+          <div><dt>本机累计 tokens</dt><dd id="usage-total" class="usage-tally">—</dd></div>
+          <div><dt>本机活跃天数</dt><dd id="usage-days" class="usage-tally">—</dd></div>
+          <div>
+            <dt>30 天峰值日 <span id="usage-peak-date"></span></dt>
+            <dd id="usage-peak" class="usage-tally">—</dd>
+            <dd id="usage-peak-cost" class="usage-metric-note"></dd>
+          </div>
+        </dl>
+        <figure class="usage-chart" aria-label="每日 token 用量">
+          <figcaption id="usage-day-detail" class="usage-tally"></figcaption>
+          <div id="usage-bars" role="group" aria-label="每日用量，可使用左右方向键选择日期"></div>
+          <div class="usage-axis" aria-hidden="true"><span id="usage-start"></span><span id="usage-end"></span></div>
+        </figure>
+        <dl class="usage-metrics usage-breakdown" aria-label="所选日期的 Token 明细">
+          <div><dt>输入 Token</dt><dd id="usage-day-input" class="usage-tally">—</dd></div>
+          <div><dt>输出 Token</dt><dd id="usage-day-output" class="usage-tally">—</dd></div>
+          <div><dt>缓存命中率</dt><dd id="usage-day-cache" class="usage-tally">—</dd>
+            <dd id="usage-day-cache-count" class="usage-metric-note" hidden></dd></div>
+        </dl>
+        <p id="usage-price-note" class="dialog-note"></p>
+        <div class="usage-ranking" aria-labelledby="usage-ranking-title">
+          <h3 id="usage-ranking-title">当日会话排行</h3>
+          <p id="usage-ranking-status" class="usage-status" role="status"></p>
+          <ol id="usage-ranking"></ol>
+        </div>
+      </div>
+    </section>
+    <p class="dialog-note">仅统计本机 Codex 日志。速率按最近 1 分钟滚动计算，日志写入可能有延迟。</p>
+  </main>
+  <div id="usage-tooltip" role="tooltip" hidden>
+    <strong id="usage-tooltip-date"></strong>
+    <span id="usage-tooltip-tokens" class="usage-tally"></span>
+    <span id="usage-tooltip-split" class="usage-tally" hidden></span>
+    <span id="usage-tooltip-cache" class="usage-tally" hidden></span>
+    <span id="usage-tooltip-cost" class="usage-tally"></span>
+  </div>
+  <script src="office-i18n.js"></script>
+  <script src="office-dropdown.js"></script>
+  <script>
+(() => {
+  const i18n = window.officeI18n;
+  const t = i18n.text;
+  const byId = id => document.getElementById(id);
+  const nativeToolbar = document.documentElement.classList.contains('native-toolbar');
+  const stage = document.querySelector('.stage');
+  const canvas = byId('webgl');
+  const fallback = byId('fallback');
+  const annotations = document.querySelector('.annotations');
+  const agentLinks = document.querySelector('.agent-links');
+  const packets = document.querySelector('.packets');
+  const detail = byId('detail');
+  const chatTitleTooltip = byId('chat-title-tooltip');
+  const source = byId('source');
+  const waitingCount = byId('waiting-count');
+  const pageControls = [...document.querySelectorAll('.page')];
+  const collaborationButton = byId('collaboration');
+  const dialog = byId('collaboration-panel');
+  const coordinationPicker = byId('coordination-picker');
+  const groupPicker = byId('group-picker');
+  const coordinationNote = byId('coordination-note');
+  const linkForm = byId('link-form');
+  const coordinatorPicker = byId('coordinator-picker');
+  const executorPicker = byId('executor-picker');
+  const submitLink = linkForm.querySelector('button[type="submit"]');
+  const activeCollaboration = byId('active-collaboration');
+  const coordinatorLabel = byId('coordinator-label');
+  const coordinatorChat = byId('coordinator-chat');
+  const noDispatches = byId('no-dispatches');
+  const receipts = byId('receipts');
+  const manualActions = byId('manual-actions');
+  const dark = matchMedia('(prefers-color-scheme: dark)');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const bridge = message => window.webkit?.messageHandlers?.office?.postMessage(message);
+  const YAW = 18 * Math.PI / 180;
+  const PITCH = 27 * Math.PI / 180;
+  const COS_YAW = Math.cos(YAW), SIN_YAW = Math.sin(YAW);
+  const COS_PITCH = Math.cos(PITCH), SIN_PITCH = Math.sin(PITCH);
+  const PROJECT = 4.55, WORK = 0.00;
+  const colors = {
+    porcelain: ['#e3e8f9','#cbd4f0'], helmetTrim: ['#9daada','#8295d1'],
+    agentShell: ['#bce9e0','#a3d8ce'], agentTrim: ['#5c9f98','#5d9e98'],
+    rubber: ['#353453','#414269'], visor: ['#20233e','#272a48'],
+    eyes: ['#86f7de','#abffeb'], eyeGlint: ['#f0fffa','#f4fffb'],
+    lavender: ['#6557c0','#9281ee'], teal: ['#249389','#57bcb1'],
+    coral: ['#bd6a62','#e58b7e'], cobalt: ['#4869b6','#7e98ef'],
+    floor: ['#f4f3ff','#545674'], floorWork: ['#edf5f2','#455e65'],
+    floorEdge: ['#c1c1e2','#383c61'], workEdge: ['#a8c7bf','#3b575e'],
+    base: ['#a4a5ce','#2f3252'], baseWork: ['#8caea9','#324c51'],
+    wall: ['#e3e4f5','#656c90'], wallWork: ['#d9eae8','#52727a'],
+    shelf: ['#c8cde8','#4a5072'], window: ['#d3e2fb','#788bae'],
+    wood: ['#d9bd9b','#998273'], desk: ['#f5e5d1','#b7a48f'],
+    screen: ['#303754','#343c5b'], screenOn: ['#bad0ff','#879fef'],
+    rugViolet: ['#d9d5f1','#68618b'], rugTeal: ['#cee7e3','#527f7f'],
+    finished: ['#888caf','#a4abce'], editGlow: ['#ffdf83','#e6b258'],
+    rugCoral: ['#f1dcd6','#89656d'], rugBlue: ['#dce7f7','#566b8f'],
+    plant: ['#579a78','#72a88d'], plantLight: ['#8cbf92','#9acaa1'],
+    orchid: ['#e2b6cc','#bd8fbd'], route: ['#826bd7','#b6a5ff'],
+    good: ['#329a7d','#8fe5c1'], amber: ['#dd9754','#ffc078'],
+    paper: ['#faf9f3','#d5d5d8']
+  };
+  const names = Object.keys(colors);
+  const indexOf = Object.fromEntries(names.map((name, index) => [name, index]));
+
+  function add(a, b) { return a.map((n, i) => n + b[i]); }
+  function sub(a, b) { return a.map((n, i) => n - b[i]); }
+  function mul(v, n) { return v.map(x => x * n); }
+  function dot(a, b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+  function cross(a,b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+  function unit(v) { return mul(v, 1/(Math.hypot(...v)||1)); }
+  function power(n,e) { return Math.sign(n)*Math.pow(Math.abs(n),e); }
+  function rgb(hex) { return [1,3,5].map(i => parseInt(hex.slice(i,i+2),16)/255); }
+
+  function mesh() {
+    const vertices = [];
+    function face(points, name, center) {
+      const centerOfFace = mul(points.reduce(add, [0,0,0]), 1/points.length);
+      let normal = unit(cross(sub(points[1],points[0]),sub(points[2],points[0])));
+      if (dot(normal,sub(centerOfFace,center)) < 0) normal = mul(normal,-1);
+      for (let i=1; i<points.length-1; i++) {
+        for (const p of [points[0],points[i],points[i+1]]) vertices.push(...p,...normal,indexOf[name]);
+      }
+    }
+    function prism(points, bottom, top, topColor, sideColor = topColor) {
+      const up = points.map(([x,z]) => [x,top,z]);
+      const down = points.map(([x,z]) => [x,bottom,z]);
+      const center = mul([...up,...down].reduce(add,[0,0,0]),1/(up.length+down.length));
+      face(up,topColor,center);
+      face(down,sideColor,center);
+      for (let i=0; i<up.length; i++) {
+        const next = (i+1)%up.length;
+        face([up[i],down[i],down[next],up[next]],sideColor,center);
+      }
+    }
+    function box(x,y,z,w,h,d,color,edge = 0,side = color) {
+      const x0=x-w/2, x1=x+w/2, z0=z-d/2, z1=z+d/2;
+      const points = edge ? [[x0+edge,z0],[x1-edge,z0],[x1,z0+edge],[x1,z1-edge],
+        [x1-edge,z1],[x0+edge,z1],[x0,z1-edge],[x0,z0+edge]]
+        : [[x0,z0],[x1,z0],[x1,z1],[x0,z1]];
+      prism(points,y-h/2,y+h/2,color,side);
+    }
+    function disk(x,y,z,r,h,color,rx = 1) {
+      const points = Array.from({length:20},(_,i) => {
+        const t=i*Math.PI*2/20;
+        return [x+r*rx*Math.cos(t),z+r*Math.sin(t)];
+      });
+      prism(points,y-h/2,y+h/2,color);
+    }
+    function orb(center, radii, color, shape=1, direction=[0,1,0], steps=14, rows=8) {
+      const vertical=unit(direction);
+      const horizontal=unit(cross(vertical,Math.abs(vertical[2])<0.9?[0,0,1]:[0,1,0]));
+      const depth=cross(horizontal,vertical);
+      const points=Array.from({length:rows+1},(_,row) => {
+        const lat=Math.PI*(row/rows-0.5), ring=Math.pow(Math.max(0,Math.cos(lat)),shape);
+        return Array.from({length:steps},(_,column) => {
+          const lon=Math.PI*2*column/steps;
+          const p=mul(horizontal,radii[0]*ring*power(Math.cos(lon),shape));
+          const q=mul(vertical,radii[1]*power(Math.sin(lat),shape));
+          const r=mul(depth,radii[2]*ring*power(Math.sin(lon),shape));
+          return add(center,add(p,add(q,r)));
+        });
+      });
+      for (let row=0; row<rows; row++) {
+        for (let col=0; col<steps; col++) {
+          const next=(col+1)%steps;
+          const a=points[row][col], b=points[row][next], c=points[row+1][next], d=points[row+1][col];
+          face(row===0?[a,c,d]:row===rows-1?[a,b,d]:[a,b,c,d],color,center);
+        }
+      }
+    }
+    function link(a,b,r,color) {
+      const difference=sub(b,a);
+      orb(mul(add(a,b),0.5),[r,Math.hypot(...difference)*0.5+r*0.4,r],color,0.83,difference,8,6);
+    }
+    return {vertices,box,orb,disk,link};
+  }
+
+  const keyboardPoses = [
+    [0,0], [0.14,0], [0.03,0.14], [0.12,0.02], [0,0.10], [0,0]
+  ];
+  const robotLook = {shell:'porcelain',trim:'helmetTrim',joint:'rubber',visor:'visor',eyes:'eyes'};
+  const agentLook = {...robotLook,shell:'agentShell',trim:'agentTrim'};
+  const AGENT_SIZE = 0.67;
+
+  function seatedRobot(outfit, headset, simplified, helper=false) {
+    const look=helper ? agentLook : robotLook;
+    const s=0.48*(helper ? AGENT_SIZE : 1);
+    const p=point => mul(point,s);
+    function rigPart(origin=[0,0,0]) {
+      const model=mesh();
+      const local=point => p(sub(point,origin));
+      return {
+        model,
+        orb:(point,radii,color,shape=1) => model.orb(local(point),p(radii),color,shape,[0,1,0],simplified?9:14,simplified?5:8),
+        link:(a,b,r,color) => model.link(local(a),local(b),r*s,color)
+      };
+    }
+    const body=rigPart();
+    body.orb([0,0.79,-0.06],[0.43,0.42,0.30],outfit,0.73);
+    body.orb([0,1.20,0.01],[0.23,0.16,0.20],look.joint,0.75);
+    body.orb([0,0.93,0.23],[0.15,0.105,0.041],look.trim,0.65);
+    body.orb([0,0.93,0.271],[0.065,0.035,0.015],look.eyes,0.70);
+    for (const side of [-1,1]) {
+      body.link([side*0.22,0.48,-0.02],[side*0.24,0.46,0.37],0.13,outfit);
+      body.link([side*0.24,0.45,0.37],[side*0.24,0.14,0.40],0.105,look.joint);
+      body.orb([side*0.24,0.12,0.48],[0.17,0.12,0.19],outfit,0.67);
+      body.orb([side*0.41,1.08,0.05],[0.14,0.145,0.13],look.trim,0.85);
+    }
+    const neck=[0,1.28,0.04];
+    const head=rigPart(neck), {orb,link}=head;
+    orb([0,1.74,0.09],[0.63,0.49,0.51],look.shell,0.72);
+    orb([0,1.72,0.486],[0.481,0.289,0.194],look.trim,0.63);
+    orb([0,1.72,0.538],[0.425,0.242,0.167],look.visor,0.66);
+    if (helper) {
+      link([0,2.12,0.02],[0,2.38,0.02],0.04,look.trim);
+      orb([0,2.39,0.02],[0.085,0.076,0.085],look.eyes);
+    }
+    const eyes=[rigPart(neck),rigPart(neck)];
+    for (const side of [-1,1]) {
+      const x=side*0.158;
+      eyes[0].orb([x,1.75,0.70],[0.068,0.103,0.022],look.eyes,0.68);
+      eyes[0].orb([x-0.015,1.784,0.722],[0.018,0.020,0.008],'eyeGlint');
+      eyes[1].orb([x,1.72,0.70],[0.068,0.018,0.022],look.eyes,0.68);
+      if (headset) {
+        orb([side*0.59,1.75,0.105],[0.12,0.22,0.204],outfit,0.78);
+        orb([side*0.69,1.75,0.105],[0.042,0.14,0.14],look.trim,0.80);
+      }
+    }
+    if (headset) {
+      for (let i=1; i<=12; i++) {
+        const band=t => [Math.cos(t)*0.62,1.74+Math.sin(t)*0.51,0.05];
+        link(band((i-1)*Math.PI/12),band(i*Math.PI/12),0.05,outfit);
+      }
+      link([0.60,1.62,0.27],[0.34,1.54,0.68],0.035,outfit);
+      orb([0.34,1.54,0.68],[0.059,0.038,0.041],look.joint,0.76);
+    }
+    function armPose(lifts) {
+      const arms=rigPart();
+      for (const [index,side] of [-1,1].entries()) {
+        const lift=lifts?.[index] ?? 0;
+        const shoulder=[side*0.41,1.08,0.05];
+        const elbow=lifts ? [side*0.52,1.035+lift*0.36,0.30] : [side*0.52,0.83,0.22];
+        const wrist=lifts ? [side*0.37,1.245+lift,0.63+lift*0.52] : [side*0.43,0.80,0.44];
+        arms.link(shoulder,elbow,0.10,outfit);
+        arms.link(elbow,wrist,0.099,look.shell);
+        arms.orb(wrist,[0.112,0.084,0.116],look.joint,0.75);
+      }
+      return arms.model;
+    }
+    return {body:body.model,head:head.model,eyes:eyes.map(part => part.model),neck:p(neck),
+      poses:keyboardPoses.map(armPose),rest:armPose()};
+  }
+
+  function chair(m,x,y,z) {
+    m.box(x,y+0.068,z-0.10,0.48,0.05,0.42,'screen',0.07);
+    m.box(x,y+0.20,z-0.10,0.105,0.27,0.11,'screen',0.028);
+    m.box(x,y+0.32,z-0.08,0.60,0.13,0.53,'shelf',0.08);
+    m.box(x,y+0.53,z-0.33,0.57,0.42,0.09,'shelf',0.046);
+  }
+
+  function workstationScreen(m,x,y,z) {
+    m.box(x,y+0.657,z,0.32,0.047,0.22,'shelf',0.035);
+    m.box(x,y+0.731,z+0.017,0.077,0.16,0.091,'screen',0.017);
+    m.box(x,y+0.828,z+0.047,0.51,0.27,0.078,'screen',0.036);
+    // The display surface faces the robot (-z); the scene shows the back casing (+z).
+    m.box(x,y+0.828,z,0.44,0.211,0.022,'screenOn',0.026);
+    m.box(x,y+0.812,z+0.089,0.13,0.028,0.012,'shelf',0.011);
+  }
+
+  function keyboard(m,x,y,z) {
+    m.box(x,y+0.641,z,0.43,0.030,0.16,'shelf',0.027);
+    m.box(x,y+0.662,z,0.38,0.014,0.114,'paper',0.016);
+  }
+
+  function desk(m,x,y,z,accent) {
+    chair(m,x,y,z);
+    m.box(x,y+0.57,z+0.45,1.20,0.11,0.76,'desk',0.075,'wood');
+    for (const side of [-1,1]) m.box(x+side*0.49,y+0.27,z+0.45,0.11,0.50,0.56,'wood',0.04);
+    keyboard(m,x,y,z+0.30);
+    workstationScreen(m,x+0.08,y,z+0.64);
+    m.disk(x+0.43,y+0.70,z+0.54,0.070,0.145,accent);
+  }
+
+  const agentDesk = mesh();
+  desk(agentDesk,0,0,0,'teal');
+  for (let i=0; i<agentDesk.vertices.length; i+=7) {
+    for (let axis=0; axis<3; axis++) agentDesk.vertices[i+axis] *= AGENT_SIZE;
+  }
+
+  function plant(m,x,y,z,size=1) {
+    m.disk(x,y+0.18*size,z,0.19*size,0.36*size,'wood',0.95);
+    m.disk(x,y+0.355*size,z,0.203*size,0.065*size,'desk');
+    m.orb([x,y+0.56*size,z],[0.25*size,0.26*size,0.23*size],'plant',0.91);
+    m.orb([x+0.17*size,y+0.53*size,z+0.12*size],[0.14*size,0.17*size,0.139*size],'plantLight',0.86);
+    m.orb([x-0.13*size,y+0.68*size,z-0.12*size],[0.13*size,0.19*size,0.13*size],'plantLight',0.94);
+  }
+
+  function floor(m,y,isProject) {
+    const top=isProject?'floor':'floorWork', edge=isProject?'floorEdge':'workEdge', base=isProject?'base':'baseWork';
+    const wall=isProject?'wall':'wallWork';
+    m.box(0,y-0.27,0,12.95,0.42,5.03,edge,0.24,base);
+    m.box(0,y-0.058,0,13.12,0.17,5.18,top,0.24,edge);
+    m.box(0,y+0.255,-2.33,12.12,0.49,0.25,wall,0.065);
+    m.box(-6.02,y+0.23,-1.60,0.27,0.43,1.35,wall,0.055);
+    m.box(0,y+0.54,-2.33,12.07,0.085,0.30,'shelf',0.065);
+    for (const x of [-4.68,-2.33,1.6,4.12]) {
+      m.box(x,y+0.335,-2.185,1.58,0.286,0.041,'window',0.045);
+      m.box(x,y+0.335,-2.153,0.039,0.29,0.019,wall);
+    }
+    for (const x of [-5.05,-4.65,-4.25,-3.85,3.85,4.25,4.65,5.05]) {
+      m.box(x,y-0.172,2.514,0.18,0.032,0.016,isProject?'rugViolet':'rugTeal');
+    }
+  }
+
+
+  function camera([x,y,z]) {
+    const side=x*COS_YAW+z*SIN_YAW;
+    const forward=z*COS_YAW-x*SIN_YAW;
+    return [side,y*COS_PITCH-forward*SIN_PITCH,forward*COS_PITCH+y*SIN_PITCH];
+  }
+  function project(point) {
+    const p=camera(point);
+    return [view.width/2+p[0]*view.scale,view.floor-p[1]*view.scale,p[2]];
+  }
+
+  function webgl() {
+    const gl=canvas.getContext('webgl2',{alpha:true,antialias:true});
+    if (!gl) return null;
+    const vertex=[
+      '#version 300 es',
+      'in vec3 position, normal;',
+      'in float material;',
+      'uniform vec2 yaw, pitch, facing, tilt, scale;',
+      'uniform vec3 offset, pigments['+names.length+'];',
+      'uniform float baseline;',
+      'out vec3 color;',
+      'vec3 rotateY(vec3 v, vec2 a) { return vec3(v.x*a.x+v.z*a.y,v.y,v.z*a.x-v.x*a.y); }',
+      'vec3 orient(vec3 v) { return rotateY(vec3(v.x,v.y*tilt.x-v.z*tilt.y,v.z*tilt.x+v.y*tilt.y),facing); }',
+      'vec3 cam(vec3 p) { vec3 r=rotateY(p,yaw); return vec3(r.x,r.y*pitch.x-r.z*pitch.y,r.z*pitch.x+r.y*pitch.y); }',
+      'void main() {',
+      ' vec3 p=cam(orient(position)+offset);',
+      ' gl_Position=vec4(p.x*scale.x,p.y*scale.y+baseline,-p.z/16.0,1.0);',
+      ' vec3 n=cam(orient(normal));',
+      ' float l=max(0.0,dot(n,vec3(-0.39,0.74,0.55)));',
+      ' float gleam=pow(l,11.0)*0.10;',
+      ' vec3 tint=pigments[int(material)];',
+      ' color=int(material)==' + indexOf.eyes + ' || int(material)==' + indexOf.eyeGlint + ' ? tint : mix(tint*(0.74+0.27*l),vec3(1.0),gleam);',
+      '}'
+    ].join('\n');
+    const fragment=[
+      '#version 300 es','precision mediump float;','in vec3 color;','out vec4 pixel;',
+      'void main() { pixel=vec4(color,1.0); }'
+    ].join('\n');
+    const program=gl.createProgram();
+    for (const [type,source] of [[gl.VERTEX_SHADER,vertex],[gl.FRAGMENT_SHADER,fragment]]) {
+      const shader=gl.createShader(type);
+      gl.shaderSource(shader,source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader,gl.COMPILE_STATUS)) return null;
+      gl.attachShader(program,shader);
+    }
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program,gl.LINK_STATUS)) return null;
+    gl.useProgram(program);
+    gl.enable(gl.DEPTH_TEST);
+    const uniforms=Object.fromEntries(['yaw','pitch','facing','tilt','scale','offset','pigments','baseline']
+      .map(name => [name,gl.getUniformLocation(program,name==='pigments'?'pigments[0]':name)]));
+    const attr=['position','normal','material'].map(name => gl.getAttribLocation(program,name));
+    attr.forEach(location => gl.enableVertexAttribArray(location));
+    gl.uniform2f(uniforms.yaw,COS_YAW,SIN_YAW);
+    gl.uniform2f(uniforms.pitch,COS_PITCH,SIN_PITCH);
+    const buffers=new Map();
+    function buffer(model) {
+      if (!buffers.has(model)) {
+        const data=new Float32Array(model.vertices), id=gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER,id);
+        gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+        buffers.set(model,{id,count:data.length/7});
+      }
+      return buffers.get(model);
+    }
+    return {
+      setPalette() { gl.uniform3fv(uniforms.pigments,palette.flat()); },
+      release(model) {
+        const data=buffers.get(model);
+        if (!data) return;
+        gl.deleteBuffer(data.id);
+        buffers.delete(model);
+      },
+      paint(parts) {
+        gl.viewport(0,0,canvas.width,canvas.height);
+        gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+        gl.uniform2f(uniforms.scale,2*view.scale/view.width,2*view.scale/view.height);
+        gl.uniform1f(uniforms.baseline,1-2*view.floor/view.height);
+        for (const {model,offset=[0,0,0],angle=0,tilt=0} of parts) {
+          const data=buffer(model);
+          gl.uniform2f(uniforms.facing,Math.cos(angle),Math.sin(angle));
+          gl.uniform2f(uniforms.tilt,Math.cos(tilt),Math.sin(tilt));
+          gl.uniform3fv(uniforms.offset,offset);
+          gl.bindBuffer(gl.ARRAY_BUFFER,data.id);
+          gl.vertexAttribPointer(attr[0],3,gl.FLOAT,false,28,0);
+          gl.vertexAttribPointer(attr[1],3,gl.FLOAT,false,28,12);
+          gl.vertexAttribPointer(attr[2],1,gl.FLOAT,false,28,24);
+          gl.drawArrays(gl.TRIANGLES,0,data.count);
+        }
+      }
+    };
+  }
+
+  function drawFallback(parts) {
+    const ctx=fallback.getContext('2d');
+    if (!ctx) return;
+    const {width,height}=fallback;
+    if (softwareFrame?.image.width!==width || softwareFrame?.image.height!==height) {
+      softwareFrame={image:ctx.createImageData(width,height),depth:new Float32Array(width*height)};
+    }
+    const {image,depth}=softwareFrame;
+    const pixels=image.data;
+    pixels.fill(0);
+    depth.fill(-Infinity);
+    for (const {model,offset=[0,0,0],angle=0,tilt=0} of parts) {
+      const data=model.vertices, c=Math.cos(angle), s=Math.sin(angle);
+      const tc=Math.cos(tilt), ts=Math.sin(tilt);
+      const rotate=(x,y,z) => {
+        const depth=z*tc+y*ts;
+        return [x*c+depth*s,y*tc-z*ts,depth*c-x*s];
+      };
+      for (let i=0; i<data.length; i+=21) {
+        const normal=camera(rotate(data[i+3],data[i+4],data[i+5]));
+        if (normal[2]<=0) continue;
+        const [[ax,ay,az],[bx,by,bz],[cx,cy,cz]]=[i,i+7,i+14].map(j => {
+          const [x,y,z]=project(add(offset,rotate(data[j],data[j+1],data[j+2])));
+          return [x*view.ratio,y*view.ratio,z];
+        });
+        const area=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);
+        if (Math.abs(area)<0.00001) continue;
+        const x0=Math.max(0,Math.floor(Math.min(ax,bx,cx)));
+        const x1=Math.min(width-1,Math.floor(Math.max(ax,bx,cx)));
+        const y0=Math.max(0,Math.floor(Math.min(ay,by,cy)));
+        const y1=Math.min(height-1,Math.floor(Math.max(ay,by,cy)));
+        const uX=(by-cy)/area, uY=(cx-bx)/area;
+        const vX=(cy-ay)/area, vY=(ax-cx)/area;
+        const material=data[i+6];
+        const luminous=material===indexOf.eyes || material===indexOf.eyeGlint;
+        const light=Math.max(0,dot(normal,[-0.39,0.74,0.55]));
+        const shade=luminous?1:0.74+light*0.27;
+        const gleam=luminous?0:Math.pow(light,11)*0.10;
+        const [r,g,b]=palette[material].map(channel => (channel*shade*(1-gleam)+gleam)*255);
+        for (let y=y0; y<=y1; y++) {
+          let u=(x0+0.5-cx)*uX+(y+0.5-cy)*uY;
+          let v=(x0+0.5-cx)*vX+(y+0.5-cy)*vY;
+          let index=y*width+x0;
+          for (let x=x0; x<=x1; x++,index++,u+=uX,v+=vX) {
+            if (u<-0.000001 || v<-0.000001 || u+v>1.000001) continue;
+            const z=cz+u*(az-cz)+v*(bz-cz);
+            if (z<=depth[index]) continue;
+            depth[index]=z;
+            const pixel=index*4;
+            pixels[pixel]=r;
+            pixels[pixel+1]=g;
+            pixels[pixel+2]=b;
+            pixels[pixel+3]=255;
+          }
+        }
+      }
+    }
+    ctx.putImageData(image,0,0);
+  }
+
+  const PROJECT_ROOMS = 3;
+  const ROOM_SEATS = 2;
+  const WORK_SEATS = 6;
+  const EXIT_MS = 3600;
+  const WAIT_LIFT_MS = 420;
+  const FLASH_MS = 1150;
+  const RECENT_COORDINATION_MS = 5 * 60 * 1000;
+  const DISPATCH_PULSE_MS = 5000;
+  const FRESH_DISPATCH_MS = 30000;
+  const MANUAL_GROUP = 'manual';
+  const ROOM_X = [-3.88, 0, 3.88];
+  const ROOM_WIDTH = 3.53;
+  const outfits = ['lavender', 'teal', 'coral', 'cobalt'];
+  const rugs = ['rugViolet', 'rugTeal', 'rugCoral', 'rugBlue'];
+  const statusLabels = {
+    running: '运行中', waiting: '等你确认', completed: '已完成', interrupted: '已中断', unknown: '状态未知', idle: '空闲'
+  };
+  const hasActiveTurn = thread => thread?.status==='running' || thread?.status==='waiting';
+  const state = {
+    visible: false,
+    initialized: false,
+    source: null,
+    collectedAt: null,
+    sidebar: {available:false,sections:new Map()},
+    visibleSections: null,
+    projectNames: new Map(),
+    roots: new Map(),
+    remembered: new Map(),
+    agents: new Map(),
+    active: [],
+    waitingSince: new Map(),
+    recent: [],
+    seats: new Map(),
+    emptyRooms: new Map(),
+    departures: new Map(),
+    editSeen: new Set(),
+    badges: new Map(),
+    flashes: new Map(),
+    collaboration: null,
+    manualCollaboration: null,
+    coordination: null,
+    coordinationStale: false,
+    automaticDisplay: false,
+    pinnedCoordinator: '',
+    observedDispatches: new Map(),
+    dispatchBaseline: false,
+    pendingDispatchPulses: [],
+    selected: null,
+    pages: { project: 0, work: 0 },
+    draftCoordinator: '',
+    draftExecutors: new Set(),
+    timer: 0,
+    frame: 0,
+    pulses: []
+  };
+  const avatars = new Map();
+  const building = mesh();
+  floor(building,WORK,false);
+  floor(building,PROJECT,true);
+  for (const y of [PROJECT,WORK]) {
+    plant(building,-5.65,y,-1.63,0.86);
+    plant(building,5.61,y,-1.59,0.94);
+  }
+  const lounge = mesh();
+  lounge.box(3.62,WORK+0.05,0,3.75,0.048,3.10,'rugTeal',0.18);
+  lounge.box(3.61,WORK+0.25,-0.89,2.06,0.39,0.79,'teal',0.11);
+  lounge.box(3.61,WORK+0.60,-1.21,2.06,0.61,0.26,'teal',0.10);
+  for (const side of [-1,1]) lounge.box(3.61+side*0.96,WORK+0.43,-0.89,0.23,0.55,0.78,'teal',0.08);
+  lounge.box(3.29,WORK+0.46,-1.03,0.37,0.18,0.27,'rugViolet',0.05);
+  lounge.box(3.88,WORK+0.46,-1.03,0.37,0.18,0.27,'desk',0.05);
+  lounge.disk(3.68,WORK+0.23,0.72,0.46,0.40,'wood',1.22);
+  lounge.disk(3.68,WORK+0.46,0.72,0.49,0.07,'desk',1.22);
+  lounge.box(3.55,WORK+0.52,0.72,0.34,0.045,0.23,'cobalt',0.025);
+  lounge.box(3.55,WORK+0.548,0.72,0.31,0.025,0.21,'paper',0.02);
+  lounge.disk(3.93,WORK+0.58,0.73,0.089,0.13,'porcelain');
+
+  const hub = mesh();
+  hub.box(0,PROJECT+0.049,1.66,1.84,0.04,1.43,'rugViolet',0.17);
+  hub.disk(0,PROJECT+0.30,1.74,0.34,0.48,'lavender',1.22);
+  hub.disk(0,PROJECT+0.57,1.74,0.60,0.10,'lavender',1.20);
+  hub.disk(0,PROJECT+0.635,1.74,0.56,0.046,'rugViolet',1.20);
+  chair(hub,0,PROJECT,1.23);
+  keyboard(hub,0,PROJECT+0.02,1.53);
+  workstationScreen(hub,0.08,PROJECT+0.02,1.87);
+  hub.disk(0.43,PROJECT+0.73,1.72,0.067,0.16,'porcelain');
+
+  let view = null;
+  let palette = [];
+  let renderer = null;
+  let softwareFrame = null;
+  let paintKey = '';
+  let robotTimer = 0;
+  let layout = { roles: [], agents: [], rooms: [], routes: new Map(), pageCounts: { project: 1, work: 1 } };
+  let agentSides = new Map();
+  let geometry = { key: '', office: null, highlights: new Map() };
+  let markersKey = '';
+  let firstClickChat = null;
+  let chatHover = null;
+  let dialogKey = '';
+  let groupPickerKey = '';
+
+  function projectName(id) {
+    return id ? state.projectNames.get(id) || t('项目') : t('工作');
+  }
+
+  function chatTitle(thread) {
+    const kind = thread?.title_kind;
+    if (kind && thread.id) {
+      const label = kind==='subagent' ? '子 Agent' : kind==='guardian_review' ? '审查 Agent' : 'Codex 会话';
+      return t(label)+' · '+thread.id.slice(0,12);
+    }
+    return thread?.title?.trim() || t('未命名聊天');
+  }
+
+  function threadName(thread) {
+    return projectName(thread.project_id) + ' · ' + chatTitle(thread);
+  }
+
+  function normalizeVisibleSections(value) {
+    return Array.isArray(value) ? [...new Set(value.filter(id => id===null || (typeof id==='string' && id)))] : null;
+  }
+
+  function setVisibleSections(value) {
+    const sections = normalizeVisibleSections(value);
+    const previous = state.visibleSections;
+    if (sections===null ? previous===null : previous?.size===sections.length && sections.every(id => previous.has(id))) return;
+    state.visibleSections = sections===null ? null : new Set(sections);
+    stopPulses();
+  }
+
+  function visibleInOffice(thread) {
+    return state.visibleSections===null || (thread && state.visibleSections.has(thread.section_id));
+  }
+
+  function updateSidebar(value) {
+    if (value?.source_status!=='ok' && value?.source_status!=='unavailable') return;
+    const available = value.source_status==='ok';
+    const sections = new Map();
+    for (const section of Array.isArray(value.sections) ? value.sections : []) {
+      if (typeof section?.id==='string' && section.id && typeof section.name==='string' && section.name) {
+        sections.set(section.id,section.name);
+      }
+    }
+    state.sidebar = {available,sections:available || sections.size ? sections : state.sidebar.sections};
+    if (settingsDialog.open) renderSectionSettings();
+  }
+
+  function normalizeCollaboration(value, autoReceipts) {
+    if (typeof value?.coordinator_id!=='string' || !value.coordinator_id || !Array.isArray(value.executors)) return null;
+    const automatic = autoReceipts!==undefined;
+    const ids = new Set([value.coordinator_id]);
+    const executors = [];
+    for (const item of value.executors) {
+      if (typeof item?.thread_id!=='string' || !item.thread_id || ids.has(item.thread_id)) continue;
+      if (automatic && (typeof item.dispatched_at!=='string' || !Number.isFinite(Date.parse(item.dispatched_at)))) continue;
+      ids.add(item.thread_id);
+      const executor = {thread_id:item.thread_id,received:item.received===true};
+      if (automatic) {
+        const key = (value.coordinator_id+'|'+item.thread_id).toLowerCase();
+        executor.received = autoReceipts[key]===true;
+        executor.dispatched_at = item.dispatched_at;
+      }
+      executors.push(executor);
+    }
+    if (!automatic && executors.length<2) return null;
+    return {coordinator_id:value.coordinator_id,executors,dispatched_at:value.dispatched_at ?? null};
+  }
+
+  function automaticEnabled() {
+    return state.coordination?.source_status==='ok';
+  }
+
+  function defaultCoordinator() {
+    const cutoff = (Date.parse(state.collectedAt) || Date.now()) - RECENT_COORDINATION_MS;
+    let best = null;
+    let bestPriority = 0;
+    let bestActivity = 0;
+    for (const group of state.coordination.groups) {
+      const coordinator = state.roots.get(group.coordinator_id);
+      const coordinatorActivity = Date.parse(coordinator?.last_activity) || 0;
+      const dispatch = Date.parse(group.dispatched_at) || 0;
+      const activeExecutors = group.executors.map(item => state.roots.get(item.thread_id))
+        .filter(hasActiveTurn);
+      const activity = Math.max(coordinatorActivity,dispatch,
+        ...activeExecutors.map(thread => Date.parse(thread.last_activity) || 0));
+      let priority = 0;
+      if (hasActiveTurn(coordinator)) priority = 3;
+      else if (activeExecutors.length) priority = 2;
+      else if (dispatch>=cutoff || (!group.executors.length && coordinatorActivity>=cutoff)) priority = 1;
+      if (priority>bestPriority || (priority && priority===bestPriority && activity>bestActivity)) {
+        best = group;
+        bestPriority = priority;
+        bestActivity = activity;
+      }
+    }
+    return best;
+  }
+
+  function syncDisplayedCollaboration() {
+    const automatic = automaticEnabled() && state.pinnedCoordinator!==MANUAL_GROUP;
+    let collaboration = state.manualCollaboration;
+    if (automatic) {
+      const pinned = state.coordination.groups.find(group => group.coordinator_id===state.pinnedCoordinator);
+      if (!pinned) state.pinnedCoordinator = '';
+      collaboration = pinned || defaultCoordinator();
+    }
+    if (state.automaticDisplay!==automatic || collaboration?.coordinator_id!==state.collaboration?.coordinator_id) {
+      stopPulses();
+    }
+    state.automaticDisplay = automatic;
+    state.collaboration = collaboration;
+  }
+
+  function updateCoordination(value,autoReceipts,now) {
+    state.coordinationStale = value?.source_status==='unavailable' && automaticEnabled();
+    if (state.coordinationStale) {
+      syncDisplayedCollaboration();
+      return;
+    }
+    const groups = [];
+    const ids = new Set();
+    const fresh = (Date.parse(state.collectedAt) || Date.now()) - FRESH_DISPATCH_MS;
+    if (value?.source_status==='ok' && Array.isArray(value.groups)) {
+      for (const item of value.groups) {
+        const group = normalizeCollaboration(item,autoReceipts ?? {});
+        if (!group || ids.has(group.coordinator_id)) continue;
+        ids.add(group.coordinator_id);
+        groups.push(group);
+        for (const executor of group.executors) {
+          const key = group.coordinator_id+'|'+executor.thread_id;
+          const observed = state.observedDispatches.get(key);
+          const at = Date.parse(executor.dispatched_at);
+          const dispatched = at>=fresh && (!observed || at>observed.at);
+          const received = observed && !observed.received && executor.received;
+          if (state.visible && state.dispatchBaseline && (dispatched || received)) {
+            state.pendingDispatchPulses.push({coordinator:group.coordinator_id,id:executor.thread_id,
+              returning:!dispatched && received,expires:now+DISPATCH_PULSE_MS});
+          }
+          state.observedDispatches.set(key,{at:Math.max(observed?.at ?? 0,at),received:executor.received});
+        }
+      }
+      state.dispatchBaseline = true;
+    }
+    state.coordination = value ? {source_status:value.source_status,section:value.section,groups} : null;
+    syncDisplayedCollaboration();
+  }
+
+  function firstVacancy(used) {
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    return slot;
+  }
+
+  function assignSeats(threads) {
+    const ids = new Set(threads.map(thread => thread.id));
+    for (const id of state.seats.keys()) {
+      if (!ids.has(id)) state.seats.delete(id);
+    }
+    const work = new Set();
+    const rooms = new Map();
+    const destinations = new Map([...state.badges].map(([id,project]) => [project,id]));
+    if (state.collaboration) {
+      for (const {thread_id} of state.collaboration.executors) {
+        const project = currentThread(thread_id)?.project_id;
+        if (state.projectNames.has(project) && !destinations.has(project)) {
+          destinations.set(project,state.collaboration.coordinator_id);
+        }
+      }
+    }
+    for (const project of state.emptyRooms.keys()) {
+      if (!destinations.has(project)) state.emptyRooms.delete(project);
+    }
+    for (const seat of state.seats.values()) {
+      if (!seat.project) {
+        work.add(seat.index);
+        continue;
+      }
+      if (!rooms.has(seat.room)) rooms.set(seat.room,{project:seat.project,slots:new Set()});
+      rooms.get(seat.room).slots.add(seat.index);
+    }
+    for (const [project,room] of state.emptyRooms) {
+      if (!rooms.has(room)) rooms.set(room,{project,slots:new Set()});
+    }
+    for (const thread of threads) {
+      if (state.seats.has(thread.id)) continue;
+      const project = thread.project_id;
+      if (!project) {
+        const index = firstVacancy(work);
+        work.add(index);
+        state.seats.set(thread.id,{index});
+        continue;
+      }
+      let room = [...rooms.keys()].sort((a,b) => a-b).find(slot => {
+        const existing = rooms.get(slot);
+        return existing.project===project && existing.slots.size<ROOM_SEATS;
+      });
+      if (room===undefined) {
+        room = firstVacancy(rooms);
+        rooms.set(room,{project,slots:new Set()});
+      }
+      const slots = rooms.get(room).slots;
+      const index = firstVacancy(slots);
+      slots.add(index);
+      state.seats.set(thread.id,{project,room,index});
+    }
+    const occupiedProjects = new Set([...state.seats].flatMap(([id,seat]) =>
+      seat.project && id!==state.collaboration?.coordinator_id ? [seat.project] : []));
+    for (const [project,id] of destinations) {
+      if (occupiedProjects.has(project)) {
+        state.emptyRooms.delete(project);
+        continue;
+      }
+      const oldRoom = state.emptyRooms.get(project);
+      if (rooms.get(oldRoom)?.project===project) continue;
+      const coordinatorSeat = state.seats.get(state.collaboration?.coordinator_id);
+      const origin = state.seats.get(id);
+      const preferredPage = origin?.project ? pageOf(origin) : state.pages.project;
+      const preferredSlots = Array.from({length:PROJECT_ROOMS},(_,index) => preferredPage*PROJECT_ROOMS+index);
+      const room = coordinatorSeat?.project===project ? coordinatorSeat.room
+        : (preferredSlots.find(slot => !rooms.has(slot)) ?? firstVacancy(rooms));
+      rooms.set(room,{project,slots:new Set()});
+      state.emptyRooms.set(project,room);
+    }
+  }
+
+  function pageOf(seat) {
+    return seat.project ? Math.floor(seat.room/PROJECT_ROOMS) : Math.floor(seat.index/WORK_SEATS);
+  }
+
+  function projectStyle(id) {
+    let hash = 0;
+    for (const character of id) hash = (Math.imul(hash,31)+character.codePointAt(0))>>>0;
+    return hash % outfits.length;
+  }
+
+  function routeTo(x,y) {
+    const lane = x<0 ? -1 : 1;
+    if (y===PROJECT) return [[lane*0.66,PROJECT,1.84],[x,PROJECT,1.56],[x,PROJECT,0.72]];
+    return [[lane*0.66,PROJECT,1.84],[lane*5.58,PROJECT,1.86],
+      [lane*5.58,WORK,1.86],[x,WORK,1.56],[x,WORK,0.88]];
+  }
+
+  function buildLayout() {
+    const departures = [...state.departures.values()].map(item => item.thread);
+    assignSeats([...state.active,...departures]);
+    const active = state.active.filter(visibleInOffice);
+    const waiting = active.filter(thread => thread.status==='waiting');
+    const shown = [...active,...departures.filter(thread => visibleInOffice(currentThread(thread.id)))];
+    const threadIds = new Set(shown.map(thread => thread.id));
+    const collaboration = visibleInOffice(currentThread(state.collaboration?.coordinator_id)) ? state.collaboration : null;
+    const executors = (collaboration?.executors ?? []).filter(item => visibleInOffice(currentThread(item.thread_id)));
+    const destinations = new Set();
+    for (const [id,project] of state.badges) {
+      if (threadIds.has(id)) destinations.add(project);
+    }
+    for (const {thread_id} of executors) {
+      const project = currentThread(thread_id)?.project_id;
+      if (project) destinations.add(project);
+    }
+    const emptyRooms = [...state.emptyRooms].filter(([project]) => destinations.has(project));
+    const flashingProjects = new Set();
+    for (const {id,project} of state.flashes.values()) {
+      if (visibleInOffice(currentThread(id))) flashingProjects.add(project);
+    }
+    const available = {project:new Set(),work:new Set()};
+    const projectPages = new Map();
+    function registerProject(project,room) {
+      const page = Math.floor(room/PROJECT_ROOMS);
+      available.project.add(page);
+      if (!projectPages.has(project)) projectPages.set(project,new Set());
+      projectPages.get(project).add(page);
+    }
+    for (const {id} of shown) {
+      if (id===collaboration?.coordinator_id) continue;
+      const seat = state.seats.get(id);
+      if (seat.project) registerProject(seat.project,seat.room);
+      else available.work.add(pageOf(seat));
+    }
+    for (const [project,room] of emptyRooms) registerProject(project,room);
+    const availablePages = {};
+    for (const floor of ['project','work']) {
+      const sorted = [...available[floor]].sort((a,b) => a-b);
+      availablePages[floor] = sorted.length ? sorted : [0];
+      if (!availablePages[floor].includes(state.pages[floor])) {
+        state.pages[floor] = availablePages[floor].find(page => page>=state.pages[floor]) ?? availablePages[floor].at(-1);
+      }
+    }
+    const roles = [];
+    const rooms = new Map();
+    for (const [project,room] of emptyRooms) {
+      if (Math.floor(room/PROJECT_ROOMS)!==state.pages.project) continue;
+      rooms.set(room,{project,room,x:ROOM_X[room%PROJECT_ROOMS],style:projectStyle(project)});
+    }
+    for (const thread of shown) {
+      const seat = state.seats.get(thread.id);
+      const isProject = Boolean(seat.project);
+      if (thread.id===collaboration?.coordinator_id) {
+        const style = isProject ? projectStyle(seat.project) : 3;
+        roles.push({thread,x:0,y:PROJECT,z:1.23,style,seat,atHub:true});
+        continue;
+      }
+      const floor = isProject ? 'project' : 'work';
+      if (pageOf(seat)!==state.pages[floor]) continue;
+      const column = isProject ? seat.room % PROJECT_ROOMS : Math.floor((seat.index % WORK_SEATS)/ROOM_SEATS);
+      const position = seat.index % ROOM_SEATS;
+      const style = isProject ? projectStyle(seat.project) : 2+column%2;
+      const x = ROOM_X[column] + (position===0 ? -0.85 : 0.85);
+      const role = {thread,x,y:isProject?PROJECT:WORK,z:isProject?-0.20:0.10,style,seat};
+      roles.push(role);
+      if (isProject) rooms.set(seat.room,{project:seat.project,room:seat.room,x:ROOM_X[column],style});
+    }
+    const routes = new Map();
+    for (const {thread_id,received} of executors) {
+      const role = roles.find(candidate => candidate.thread.id===thread_id);
+      const thread = currentThread(thread_id);
+      const project = thread?.project_id;
+      const emptyArea = !state.seats.has(thread_id)
+        ? [...rooms.values()].find(room => room.project===project) : null;
+      if (role) routes.set(thread_id,{points:routeTo(role.x,role.y),received});
+      else if (emptyArea) routes.set(thread_id,{points:routeTo(emptyArea.x,PROJECT),received});
+      else if (thread && !project && !state.seats.has(thread_id)) {
+        routes.set(thread_id,{points:routeTo(0,WORK),received});
+      }
+    }
+    layout = {roles,agents:[],rooms:[...rooms.values()],routes,availablePages,projectPages,active,waiting,threadIds,collaboration,executors,flashingProjects};
+  }
+
+  function projectedBounds(x,y,z,width,depth,height) {
+    const points = [];
+    for (const dx of [-width/2,width/2]) {
+      for (const dy of [0,height]) {
+        for (const dz of [-depth/2,depth/2]) points.push(project([x+dx,y+dy,z+dz]));
+      }
+    }
+    return [Math.min(...points.map(p => p[0])),Math.min(...points.map(p => p[1])),
+      Math.max(...points.map(p => p[0])),Math.max(...points.map(p => p[1]))];
+  }
+
+  function arrangeAgentRobots() {
+    layout.agents = [];
+    const budget = Math.min(10,Math.floor(view.width/64))-layout.roles.length;
+    if (view.scale<28 || budget<=0) return;
+    const occupied = layout.roles.map(({x,y,z}) => projectedBounds(x,y,z+0.23,1.20,1.22,1.18));
+    if (layout.collaboration) occupied.push(projectedBounds(0,PROJECT,1.60,1.84,1.43,1.22));
+    if (layout.roles.every(role => role.y!==WORK || role.x<2.9)) {
+      occupied.push(projectedBounds(3.62,WORK,0,3.75,3.1,.92));
+    }
+    const teams = layout.roles.filter(role => state.agents.has(role.thread.id))
+      .sort((a,b) => b.y-a.y || a.x-b.x);
+    const nextSides = new Map();
+    // Give each team a nearby spot before attempting its second robot.
+    for (let index=0; index<2 && layout.agents.length<budget; index++) {
+      for (const parent of teams) {
+        const team = state.agents.get(parent.thread.id);
+        const thread = team[index];
+        if (!thread) continue;
+        const siblingSide = index===0 ? agentSides.get(team[1]?.id) : undefined;
+        const preferred = agentSides.get(thread.id) ?? (siblingSide ? -siblingSide : parent.x<=0 ? 1 : -1);
+        for (const side of [preferred,-preferred]) {
+          const {y,z} = parent;
+          const x = parent.x+side*1.42;
+          // An empty neighboring project area isn't part of this team's workspace.
+          if (parent.seat.project && !parent.atHub) {
+            const roomX = ROOM_X[parent.seat.room % PROJECT_ROOMS];
+            if (Math.abs(x-roomX)+.60*AGENT_SIZE>ROOM_WIDTH/2) continue;
+          }
+          const [left,top,right,bottom] = projectedBounds(x,y,z+.23*AGENT_SIZE,
+            1.20*AGENT_SIZE,1.22*AGENT_SIZE,1.29*AGENT_SIZE);
+          if (Math.abs(x)+.60*AGENT_SIZE>6.56 || left<8 || top<8 || right>view.width-8 || bottom>view.height-8) continue;
+          if (occupied.some(([l,t,r,b]) => left<r+2 && right>l-2 && top<b+2 && bottom>t-2)) continue;
+          occupied.push([left,top,right,bottom]);
+          layout.agents.push({thread,parent,side,x,y,z});
+          nextSides.set(thread.id,side);
+          break;
+        }
+        if (layout.agents.length>=budget) break;
+      }
+    }
+    agentSides = nextSides;
+  }
+
+  function drawRoute(model, points, color) {
+    for (let i=1; i<points.length; i++) {
+      const [x0,y0,z0]=points[i-1], [x1,y1,z1]=points[i];
+      const dots = Math.max(2,Math.round(Math.hypot(x1-x0,y1-y0,z1-z0)/0.17));
+      for (let j=0; j<dots; j++) {
+        const t = j/dots;
+        model.disk(x0+(x1-x0)*t,y0+(y1-y0)*t+0.086,z0+(z1-z0)*t,0.035,0.013,color);
+      }
+    }
+    const [x,y,z] = points.at(-1);
+    model.disk(x,y+0.089,z,0.080,0.018,color==='good'?'good':'amber');
+  }
+
+  function updateGeometry() {
+    const key = JSON.stringify([
+      layout.roles.map(role => [role.thread.id,role.seat,role.style,role.atHub]),
+      layout.rooms,
+      [...layout.routes],
+      Boolean(layout.collaboration)
+    ]);
+    if (geometry.key===key) return;
+    if (geometry.office) renderer?.release(geometry.office);
+    for (const highlight of geometry.highlights.values()) renderer?.release(highlight);
+    const office = mesh();
+    const highlights = new Map();
+    for (const room of layout.rooms) {
+      office.box(room.x,PROJECT+0.051,-0.56,ROOM_WIDTH,0.047,2.60,rugs[room.style],0.14);
+      const highlight = mesh();
+      highlight.box(room.x,PROJECT+0.055,-0.56,ROOM_WIDTH,0.047,2.60,'editGlow',0.14);
+      highlights.set(room.room,highlight);
+    }
+    const work = layout.roles.filter(role => role.y===WORK);
+    if (work.every(role => role.x<2.9)) office.vertices.push(...lounge.vertices);
+    for (const role of layout.roles) {
+      if (role.atHub) continue;
+      if (role.y===WORK) office.box(role.x,WORK+0.051,-0.11,1.60,0.048,2.85,rugs[role.style],0.14);
+      desk(office,role.x,role.y,role.z,outfits[role.style]);
+    }
+    for (const {points,received} of layout.routes.values()) drawRoute(office,points,received?'good':'route');
+    geometry = {key,office,highlights};
+  }
+
+  function robotParts(role, frame, lift) {
+    const helper = Boolean(role.parent);
+    const headset = role.atHub===true;
+    const waiting = role.thread.status==='waiting';
+    const color = helper ? 'teal' : hasActiveTurn(role.thread) ? outfits[role.style] : 'finished';
+    const key = helper ? 'agent' : color + (headset?'-headset':'');
+    if (!avatars.has(key)) avatars.set(key,seatedRobot(color,headset,helper || !renderer,helper));
+    const rig=avatars.get(key);
+    const motion=frame!==null && role.thread.status==='running';
+    const step=motion ? frame+projectStyle(role.thread.id)*5 : 0;
+    const pose=step%keyboardPoses.length;
+    const angle=motion ? Math.sin(pose*Math.PI/3)*0.055 : 0;
+    const blink=motion && step%(renderer?29:17)===0;
+    const offset=[role.x,role.y+0.075*(helper ? AGENT_SIZE : 1),role.z];
+    const raised=1-(1-lift)**3;
+    const headOffset=add(add(offset,rig.neck),[0,raised*0.045-Math.abs(angle)*0.48,0]);
+    const tilt=-0.42*raised;
+    return [
+      {model:rig.body,offset},
+      {model:waiting ? rig.rest : rig.poses[pose],offset},
+      {model:rig.head,offset:headOffset,angle,tilt},
+      {model:rig.eyes[Number(blink)],offset:headOffset,angle,tilt}
+    ];
+  }
+
+  function stopRobotMotion() {
+    clearTimeout(robotTimer);
+    robotTimer = 0;
+  }
+
+  function paint() {
+    if (!view || !state.visible || showingUsage || !geometry.office) return;
+    const now = performance.now();
+    const lifts = layout.roles.map(role => {
+      if (role.thread.status!=='waiting') return 0;
+      const began = state.waitingSince.get(role.thread.id);
+      return reduced.matches || began===undefined ? 1 : Math.min(1,(now-began)/WAIT_LIFT_MS);
+    });
+    const lifting = layout.roles.some(({thread},index) => thread.status==='waiting' && lifts[index]<1);
+    const typing = !reduced.matches && [...layout.roles,...layout.agents].some(role => role.thread.status==='running');
+    const interval = renderer ? 120 : 250;
+    const frame = typing ? Math.floor(now/interval) : null;
+    if ((typing || lifting) && !robotTimer) {
+      robotTimer = setTimeout(() => {
+        robotTimer = 0;
+        paint();
+      },lifting ? (renderer ? 32 : 105) : interval);
+    } else if (!typing && !lifting) stopRobotMotion();
+    const key = JSON.stringify([
+      view.width,view.height,view.ratio,geometry.key,dark.matches,Boolean(renderer),
+      layout.collaboration?.coordinator_id,[...layout.flashingProjects],
+      layout.roles.map(role => role.thread.status),layout.agents.map(({thread,x,y,z}) => [thread.id,thread.status,x,y,z]),frame,lifts
+    ]);
+    if (paintKey===key) return;
+    paintKey = key;
+    const parts = [{model:building},{model:geometry.office}];
+    if (layout.collaboration) parts.push({model:hub});
+    for (const room of layout.rooms) {
+      if (layout.flashingProjects.has(room.project)) parts.push({model:geometry.highlights.get(room.room)});
+    }
+    for (const [index,role] of layout.roles.entries()) parts.push(...robotParts(role,frame,lifts[index]));
+    for (const role of layout.agents) {
+      parts.push({model:agentDesk,offset:[role.x,role.y,role.z]});
+      parts.push(...robotParts(role,frame,role.thread.status==='waiting'?1:0));
+    }
+    if (renderer) renderer.paint(parts);
+    else drawFallback(parts);
+  }
+
+  function locate(node,point,maxWidth) {
+    const [x,y] = project(point);
+    const width = Math.min(maxWidth,view.width-10);
+    node.style.maxWidth = width+'px';
+    node.style.left = Math.max(width/2+4,Math.min(view.width-width/2-4,x))+'px';
+    node.style.top = Math.max(9,Math.min(view.height-10,y))+'px';
+  }
+
+  function marker(text,style,point,maxWidth,interactive=false) {
+    const node = document.createElement(interactive?'button':'span');
+    node.className = 'marker '+style+'-marker';
+    if (style==='chat') {
+      const name = document.createElement('span');
+      name.className = 'chat-name';
+      name.textContent = text;
+      node.append(name);
+    } else node.textContent = text;
+    if (interactive) node.type = 'button';
+    else node.title = text;
+    locate(node,point,maxWidth);
+    annotations.append(node);
+    return node;
+  }
+
+  function agentTeamDescription(agents) {
+    if (!agents?.length) return '';
+    const waiting = agents.filter(agent => agent.status==='waiting').length;
+    return waiting ? t('{0} 个子 Agent（{1} 个等你确认）',agents.length,waiting) : t('{0} 个子 Agent 工作中',agents.length);
+  }
+
+  function addAgentTeam(node,agents,width) {
+    const team = document.createElement('span');
+    team.className = 'chat-team';
+    team.setAttribute('aria-hidden','true');
+    const flow = document.createElement('span');
+    flow.className = 'agent-flow';
+    flow.dataset.running = String(agents.some(agent => agent.status==='running'));
+    const capacity = Math.max(1,Math.min(3,Math.floor((width-25)/10)));
+    for (const agent of agents.slice(0,capacity)) {
+      const badge = document.createElement('span');
+      badge.className = 'agent-node';
+      badge.dataset.status = agent.status;
+      flow.append(badge);
+    }
+    team.append(flow);
+    const overflow = agents.length-capacity;
+    if (overflow>0) team.append('+'+overflow);
+    node.append(team);
+  }
+
+  function drawAgentLinks() {
+    const links = layout.agents.map(({thread,parent,side,x,y,z}) => {
+      const [fromX,fromY] = project([parent.x+side*.49,y+.57,parent.z+.64]);
+      const [toX,toY] = project([x-side*.30,y+.57*AGENT_SIZE,z+.64*AGENT_SIZE]);
+      const dx = toX-fromX, dy = toY-fromY;
+      const link = document.createElement('span');
+      link.className = 'agent-link';
+      link.dataset.status = thread.status;
+      link.dataset.owner = parent.thread.id;
+      link.dataset.agent = thread.id;
+      link.style.left = fromX+'px';
+      link.style.top = fromY+'px';
+      link.style.width = Math.hypot(dx,dy)+'px';
+      link.style.transform = 'rotate('+Math.atan2(dy,dx)+'rad)';
+      return link;
+    });
+    agentLinks.replaceChildren(...links);
+  }
+
+  function updateMarkers() {
+    if (!view) return;
+    const coordinator = currentThread(layout.collaboration?.coordinator_id);
+    const key = JSON.stringify([
+      view.width,view.height,layout.collaboration?.coordinator_id,coordinator?.title,[...layout.flashingProjects],
+      layout.roles.map(role => [
+        role.thread.id,role.thread.title,role.thread.status,role.x,role.y,role.z,role.atHub,
+        state.agents.get(role.thread.id),state.badges.get(role.thread.id)
+      ]),
+      layout.agents.map(({thread,parent,x,y,z}) => [thread.id,thread.status,parent.thread.id,x,y,z]),
+      layout.rooms.map(room => [room.room,projectName(room.project)])
+    ]);
+    if (markersKey===key) {
+      updateMarkerSelection();
+      return;
+    }
+    markersKey = key;
+    annotations.replaceChildren();
+    drawAgentLinks();
+    const displayedAgents = new Set(layout.agents.map(role => role.thread.id));
+    const projectFloor = marker(t('项目'),'floor',[-6.30,PROJECT+0.12,1.95],i18n.language==='en'?49:37);
+    projectFloor.dataset.floor = 'project';
+    const workFloor = marker(t('工作'),'floor',[-6.30,WORK+0.12,1.95],37);
+    workFloor.dataset.floor = 'work';
+    for (const room of layout.rooms) {
+      const node = marker(projectName(room.project),'project',[room.x,PROJECT+1.10,-1.82],view.scale*3.20);
+      node.dataset.highlighted = String(layout.flashingProjects.has(room.project));
+    }
+    for (const role of layout.roles) {
+      const {thread,x,y,z} = role;
+      const agents = state.agents.get(thread.id);
+      const waiting = thread.status==='waiting';
+      const prefix = hasActiveTurn(thread)?'':(t(statusLabels[thread.status]) || t('已结束'))+' · ';
+      const title = prefix+chatTitle(thread);
+      const label = role.atHub ? t('统筹 · {0}',title) : title;
+      const point = role.atHub ? [x,y+0.06,2.40] : [x,y+0.09,z+0.70];
+      const width = Math.max(35,view.scale*(role.atHub?2.15:1.58));
+      const node = marker(label,'chat',point,width,true);
+      if (role.atHub) node.classList.add('hub-marker');
+      const compact = agents?.filter(agent => !displayedAgents.has(agent.id));
+      if (compact?.length) addAgentTeam(node,compact,width);
+      node.dataset.status = thread.status;
+      node.dataset.threadId = thread.id;
+      const description = [label,waiting?t(statusLabels.waiting):'',agentTeamDescription(agents)].filter(Boolean).join(' · ');
+      node.setAttribute('aria-label',description);
+      node.setAttribute('aria-keyshortcuts','Meta+Enter');
+      if (waiting) {
+        const wait = marker(t(statusLabels.waiting),'wait',[x,y+1.47,z+0.13],i18n.language==='en'?92:66);
+        wait.setAttribute('aria-hidden','true');
+      }
+      const badge = state.badges.get(thread.id);
+      if (badge) {
+        const badgePoint = waiting ? [point[0],point[1],point[2]+0.95] : [x,y+1.34,z+0.25];
+        marker(t('已修改 {0}',projectName(badge)),'change',badgePoint,view.scale*1.61);
+      }
+    }
+    if (layout.collaboration && !layout.roles.some(role => role.atHub)) {
+      const label = coordinator ? t('统筹 · {0}',chatTitle(coordinator)) : t('统筹桌');
+      const node = marker(label,'chat',[0,PROJECT+0.06,2.40],Math.max(63,view.scale*2.15),true);
+      node.addEventListener('click',openCollaboration);
+      node.classList.add('hub-marker');
+      node.title = label;
+    }
+    updateMarkerSelection();
+  }
+
+  function updateMarkerSelection() {
+    for (const node of annotations.querySelectorAll('[data-thread-id]')) {
+      const pressed = String(node.dataset.threadId===state.selected);
+      if (node.getAttribute('aria-pressed')!==pressed) node.setAttribute('aria-pressed',pressed);
+    }
+  }
+
+  function currentThread(id) {
+    return state.roots.get(id) || state.departures.get(id)?.thread || state.remembered.get(id);
+  }
+
+  function number(value) {
+    return usageNumber.format(value);
+  }
+
+  function updateControls() {
+    const running = layout.active.length-layout.waiting.length;
+    source.dataset.status = state.source || '';
+    source.dataset.running = String(running>0 && (state.source==='ok' || state.source==='partial'));
+    if (!state.source) source.textContent = t('等待本机快照');
+    else if (state.source==='unavailable') source.textContent = t('本机数据暂时不可用');
+    else {
+      if (running) source.textContent = t('{0} 个聊天运行中',running);
+      else if (!layout.active.length && state.active.length) source.textContent = t('当前筛选无活动聊天');
+      else source.textContent = t('暂无运行中的聊天');
+      if (state.source==='partial') source.textContent += ' · '+t('部分数据');
+    }
+    source.title = state.collectedAt ? new Date(state.collectedAt).toLocaleString(i18n.language) : '';
+    waitingCount.hidden = !layout.waiting.length;
+    if (!waitingCount.hidden) {
+      waitingCount.textContent = t('{0} 个待确认',layout.waiting.length);
+      waitingCount.setAttribute('aria-label',waitingCount.textContent+' · '+t('依次定位等你确认的聊天'));
+    }
+    const executors = nativeToolbar ? layout.executors : state.collaboration?.executors;
+    collaborationButton.textContent = executors?.length
+      ? t('跨项目协作')+' '+executors.filter(item => item.received).length+'/'+executors.length
+      : t('跨项目协作');
+    updateToolbarState();
+    const selected = currentThread(state.selected);
+    const heading = document.createElement('strong');
+    const subtitle = document.createElement('span');
+    if (selected) {
+      heading.textContent = chatTitle(selected);
+      subtitle.dataset.status = selected.status;
+      const fields = [projectName(selected.project_id),t(statusLabels[selected.status]) || t('状态未知')];
+      const agents = agentTeamDescription(state.agents.get(selected.id));
+      if (agents) fields.push(agents);
+      if (Number.isFinite(selected.token_total)) fields.push(t('{0} tokens（会话累计）',number(selected.token_total)));
+      const badge = state.badges.get(selected.id);
+      if (badge) fields.push(t('已修改 {0}',projectName(badge)));
+      if (selected.id===layout.collaboration?.coordinator_id) fields.push(t('统筹'));
+      else {
+        const executor = layout.collaboration?.executors.find(item => item.thread_id===selected.id);
+        if (executor) fields.push(executor.received?t('已回执'):t('待回执'));
+      }
+      subtitle.textContent = fields.join(' · ');
+    } else if (state.source==='unavailable') heading.textContent = t('等待聊天数据恢复');
+    else if (state.visibleSections?.size===0) heading.textContent = t('未选择显示分区');
+    else if (state.visibleSections && !layout.active.length) heading.textContent = t('所选分区暂无可显示的活动聊天');
+    else heading.textContent = t('点击工位查看聊天');
+    subtitle.title = subtitle.textContent;
+    if (detail.textContent!==heading.textContent+subtitle.textContent) detail.replaceChildren(heading,subtitle);
+    for (const control of pageControls) {
+      const floor = control.dataset.floor;
+      const pages = layout.availablePages[floor];
+      const index = pages.indexOf(state.pages[floor]);
+      control.hidden = pages.length<=1;
+      control.querySelector('span').textContent = (floor==='project'?t('项目'):t('工作'))+' '+(index+1)+'/'+pages.length;
+      control.querySelector('[data-step="-1"]').disabled = index<=0;
+      control.querySelector('[data-step="1"]').disabled = index>=pages.length-1;
+    }
+    document.querySelector('.pages').hidden = pageControls.every(control => control.hidden);
+    if (dialog.open) syncDialog();
+  }
+
+  function selectChat(id) {
+    if (!layout.threadIds.has(id)) return;
+    const seat = state.seats.get(id);
+    state.selected = id;
+    if (id!==layout.collaboration?.coordinator_id) state.pages[seat.project?'project':'work'] = pageOf(seat);
+    refresh();
+  }
+
+  function openChat(id) {
+    if (id) bridge({action:'openChat',id});
+  }
+
+  function closeOfficeDialogs(except) {
+    hideChatTitle();
+    if (except!==settingsDialog && settingsDialog.open) flushSettingText();
+    for (const modal of [dialog,settingsDialog]) {
+      if (modal!==except && modal.open) modal.close();
+    }
+  }
+
+  function openCollaboration() {
+    showUsageView(false);
+    if (dialog.open) return;
+    closeOfficeDialogs(dialog);
+    dialogKey = '';
+    state.draftCoordinator = '';
+    state.draftExecutors.clear();
+    syncDialog();
+    dialog.showModal();
+  }
+
+  function syncDraft(candidates) {
+    const coordinator = candidates.find(thread => thread.id===state.draftCoordinator);
+    if (!coordinator) state.draftCoordinator = '';
+    const chosen = candidates.filter(thread => canExecute(thread) && state.draftExecutors.has(thread.id) && thread.id!==coordinator?.id);
+    const projects = new Set(chosen.map(thread => thread.project_id));
+    submitLink.disabled = !coordinator || chosen.length<2 || projects.size<2;
+    return {coordinator,chosen};
+  }
+
+  function canExecute(thread) {
+    return state.projectNames.has(thread.project_id);
+  }
+
+  function linkedChatName(id) {
+    const thread = currentThread(id);
+    return thread ? threadName(thread) : t('聊天 …{0}',id.slice(-8));
+  }
+
+  function syncGroupPicker() {
+    const automatic = automaticEnabled();
+    coordinationPicker.hidden = !automatic;
+    let note = '';
+    if (automatic) {
+      const groups = state.coordination.groups;
+      const current = state.automaticDisplay ? state.collaboration : null;
+      if (state.coordinationStale) {
+        note = t('协作分组暂时无法读取，正在显示上次记录。');
+      } else if (!groups.length && state.automaticDisplay) {
+        note = t('Codex「{0}」中暂无统筹聊天。',state.coordination.section || t('跨项目协作'));
+      } else if (!current && state.automaticDisplay) {
+        note = t('暂无近期协作。选择统筹聊天可查看派发记录。');
+      }
+      const options = groups.map(group => {
+        const name = linkedChatName(group.coordinator_id);
+        const total = group.executors.length;
+        const received = group.executors.filter(item => item.received).length;
+        return [group.coordinator_id,total ? t('{0} · 回执 {1}/{2}',name,received,total) : name];
+      });
+      const autoLabel = !state.pinnedCoordinator && current
+        ? t('自动选择 · {0}',linkedChatName(current.coordinator_id)) : t('自动选择');
+      const manual = state.manualCollaboration;
+      const manualLabel = manual ? t('手动协作 · {0}',linkedChatName(manual.coordinator_id)) : t('手动记录派发');
+      const choices = [['',autoLabel],...options,[MANUAL_GROUP,manualLabel]];
+      const key = JSON.stringify(choices);
+      if (groupPickerKey!==key) {
+        groupPickerKey = key;
+        groupPicker.replaceChildren(...choices.map(([id,label]) => new Option(label,id)));
+      }
+      groupPicker.value = state.pinnedCoordinator;
+      window.officeDropdowns?.refresh();
+    } else {
+      const section = state.coordination?.section || t('跨项目协作');
+      const notes = {
+        not_found: t('Codex 中暂无「{0}」分组，可手动记录派发。',section),
+        ambiguous: t('Codex 中有多个同名的协作分组，可手动记录派发。'),
+        unavailable: t('Codex 协作分组暂时无法读取，可手动记录派发。')
+      };
+      note = notes[state.coordination?.source_status] || '';
+    }
+    coordinationNote.textContent = note;
+    coordinationNote.hidden = !note;
+  }
+
+  function syncDialog() {
+    const collaboration = state.collaboration;
+    const automatic = state.automaticDisplay;
+    syncGroupPicker();
+    linkForm.hidden = automatic || Boolean(collaboration);
+    activeCollaboration.hidden = !collaboration;
+    if (!collaboration) {
+      if (automatic) return;
+      const recent = state.recent;
+      const {coordinator} = syncDraft(recent);
+      const key = JSON.stringify([state.draftCoordinator,recent.map(thread => [thread.id,threadName(thread),canExecute(thread)])]);
+      if (dialogKey===key) return;
+      dialogKey = key;
+      coordinatorPicker.replaceChildren(new Option(recent.length?t('选择统筹聊天'):t('暂无聊天'),''),
+        ...recent.map(thread => new Option(threadName(thread),thread.id)));
+      coordinatorPicker.value = state.draftCoordinator;
+      coordinatorPicker.disabled = !recent.length;
+      window.officeDropdowns?.refresh();
+      executorPicker.replaceChildren();
+      for (const thread of recent) {
+        if (thread.id===coordinator?.id || !canExecute(thread)) continue;
+        const row = document.createElement('label');
+        row.className = 'executor-row';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = state.draftExecutors.has(thread.id);
+        checkbox.disabled = !coordinator;
+        checkbox.addEventListener('change',() => {
+          if (checkbox.checked) state.draftExecutors.add(thread.id);
+          else state.draftExecutors.delete(thread.id);
+          syncDraft(state.recent);
+        });
+        const text = document.createElement('span');
+        text.textContent = threadName(thread);
+        text.title = text.textContent;
+        row.append(checkbox,text);
+        executorPicker.append(row);
+      }
+      return;
+    }
+    const name = linkedChatName(collaboration.coordinator_id);
+    const rows = collaboration.executors.map(item => ({...item,name:linkedChatName(item.thread_id),
+      status:t(statusLabels[currentThread(item.thread_id)?.status])}));
+    const canRecord = !automatic || !state.coordinationStale;
+    const key = JSON.stringify([automatic,canRecord,collaboration.coordinator_id,name,rows]);
+    if (dialogKey===key) return;
+    dialogKey = key;
+    coordinatorLabel.hidden = automatic;
+    coordinatorChat.textContent = automatic ? t('打开统筹聊天') : name;
+    coordinatorChat.title = name;
+    noDispatches.hidden = rows.length>0;
+    manualActions.hidden = automatic;
+    receipts.replaceChildren();
+    for (const item of rows) {
+      const row = document.createElement('div');
+      row.className = 'receipt-row';
+      const who = document.createElement('button');
+      who.type = 'button';
+      who.className = 'who';
+      who.textContent = item.name;
+      who.title = item.name;
+      who.addEventListener('click',() => openChat(item.thread_id));
+      row.append(who);
+      if (item.status) {
+        const status = document.createElement('span');
+        status.className = 'executor-status';
+        status.textContent = item.status;
+        row.append(status);
+      }
+      const receiptStatus = document.createElement('span');
+      receiptStatus.className = 'receipt-status';
+      receiptStatus.dataset.received = String(item.received);
+      receiptStatus.textContent = item.received?t('已回执'):t('待回执');
+      row.append(receiptStatus);
+      if (!item.received) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = t('记录回执');
+        button.disabled = !canRecord;
+        button.addEventListener('click',() => {
+          const current = state.collaboration;
+          if (current?.coordinator_id!==collaboration.coordinator_id || state.automaticDisplay!==automatic) return;
+          if (automatic) {
+            bridge({action:'saveAutoReceipt',coordinator_id:current.coordinator_id,thread_id:item.thread_id});
+            return;
+          }
+          const executors = current.executors.map(entry =>
+            entry.thread_id===item.thread_id ? {...entry,received:true} : entry);
+          saveManualCollaboration({...current,executors});
+          startPulses([item.thread_id],true);
+        });
+        row.append(button);
+      }
+      receipts.append(row);
+    }
+  }
+
+  function saveManualCollaboration(collaboration) {
+    state.manualCollaboration = collaboration;
+    syncDisplayedCollaboration();
+    bridge({action:'saveCollaboration',collaboration});
+    refresh();
+  }
+
+  function stopPulses() {
+    cancelAnimationFrame(state.frame);
+    state.frame = 0;
+    state.pulses = [];
+    packets.replaceChildren();
+  }
+
+  function pointAlong(points,progress) {
+    const lengths = points.slice(1).map((point,i) => Math.hypot(...point.map((value,axis) => value-points[i][axis])));
+    let distance = progress * lengths.reduce((sum,length) => sum+length,0);
+    for (let i=0; i<lengths.length; i++) {
+      const length = lengths[i];
+      if (distance<=length && length>0) {
+        const t = distance/length;
+        return points[i].map((value,axis) => value+(points[i+1][axis]-value)*t);
+      }
+      distance -= length;
+    }
+    return points.at(-1);
+  }
+
+  function animatePulses(now) {
+    state.frame = 0;
+    if (!view || !state.visible) {
+      stopPulses();
+      return;
+    }
+    state.pulses = state.pulses.filter(pulse => {
+      const elapsed = (now-pulse.start)/760;
+      const route = layout.routes.get(pulse.id);
+      if (elapsed>=1 || !route) {
+        pulse.node.remove();
+        return false;
+      }
+      if (elapsed<0) return true;
+      const [x,y,z] = pointAlong(route.points,pulse.returning?1-elapsed:elapsed);
+      const [left,top] = project([x,y+0.15,z]);
+      pulse.node.style.left = left+'px';
+      pulse.node.style.top = top+'px';
+      pulse.node.style.opacity = String(Math.min(1,elapsed*9,(1-elapsed)*9));
+      return true;
+    });
+    if (state.pulses.length) state.frame = requestAnimationFrame(animatePulses);
+  }
+
+  function startPulses(ids,returning) {
+    if (reduced.matches || !state.visible || !view) return;
+    const now = performance.now();
+    for (const id of ids) {
+      if (!layout.routes.has(id)) continue;
+      for (const delay of [0,135]) {
+        const node = document.createElement('span');
+        node.className = 'packet';
+        node.dataset.returning = String(returning);
+        node.style.opacity = '0';
+        packets.append(node);
+        state.pulses.push({id,node,returning,start:now+delay});
+      }
+    }
+    if (state.pulses.length && !state.frame) state.frame = requestAnimationFrame(animatePulses);
+  }
+
+  function playDispatchPulses(now) {
+    const coordinator = state.automaticDisplay && state.collaboration?.coordinator_id;
+    state.pendingDispatchPulses = state.pendingDispatchPulses.filter(pulse => {
+      if (pulse.expires<=now) return false;
+      if (pulse.coordinator!==coordinator || !layout.routes.has(pulse.id)) return true;
+      startPulses([pulse.id],pulse.returning);
+      return false;
+    });
+  }
+
+  function scheduleExpirations() {
+    clearTimeout(state.timer);
+    state.timer = 0;
+    if (!state.visible) return;
+    const next = Math.min(...[...state.flashes.values(),...state.departures.values()].map(item => item.expires));
+    if (Number.isFinite(next)) state.timer = setTimeout(refresh,Math.max(0,next-performance.now()));
+  }
+
+  function refresh(focusEdit) {
+    const now = performance.now();
+    for (const [id,{expires}] of state.flashes) {
+      if (expires<=now) state.flashes.delete(id);
+    }
+    for (const [id,{expires}] of state.departures) {
+      if (expires<=now) state.departures.delete(id);
+    }
+    const shown = new Set([...state.active.map(thread => thread.id),...state.departures.keys()]);
+    for (const id of state.badges.keys()) {
+      if (!shown.has(id)) state.badges.delete(id);
+    }
+    buildLayout();
+    if (focusEdit) {
+      const pages = layout.projectPages.get(focusEdit);
+      if (pages?.size && !pages.has(state.pages.project)) {
+        state.pages.project = Math.min(...pages);
+        buildLayout();
+      }
+    }
+    if (!layout.threadIds.has(state.selected)) state.selected = layout.roles[0]?.thread.id ?? null;
+    updateControls();
+    if (state.visible && !showingUsage) {
+      if (view) arrangeAgentRobots();
+      updateGeometry();
+      updateMarkers();
+      if (chatHover && !chatHoverIsCurrent()) hideChatTitle();
+      paint();
+      playDispatchPulses(now);
+    }
+    scheduleExpirations();
+  }
+
+  function collectEdits(now,previousCollection) {
+    const shown = new Set([...state.active.map(thread => thread.id),...state.departures.keys()]);
+    const badges = new Map();
+    const changed = [];
+    const collected = Date.parse(state.collectedAt);
+    const earliestFresh = Math.max((previousCollection || 0)-10000,(collected || 0)-30000);
+    const roots = new Map(state.roots);
+    for (const [id,{thread}] of state.departures) {
+      if (!roots.has(id)) roots.set(id,thread);
+    }
+    for (const [id,thread] of roots) {
+      if (!Array.isArray(thread.cross_edits)) continue;
+      let latest = null;
+      for (const event of thread.cross_edits) {
+        if (!event?.id || !event.project_id || event.project_id===thread.project_id) continue;
+        const at = Date.parse(event.at);
+        if (!Number.isFinite(at)) continue;
+        const key = id+'|'+event.id;
+        const fresh = !state.editSeen.has(key) && at>=earliestFresh;
+        state.editSeen.add(key);
+        if (shown.has(id) && (!latest || at>=latest.at)) latest = {project:event.project_id,at,fresh};
+      }
+      if (!latest) continue;
+      badges.set(id,latest.project);
+      if (state.initialized && state.visible && latest.fresh) changed.push({...latest,id});
+    }
+    state.badges = badges;
+    changed.sort((a,b) => a.at-b.at);
+    for (const {id,project} of changed) state.flashes.set(id+'|'+project,{id,project,expires:now+FLASH_MS});
+    for (const key of state.editSeen) {
+      if (state.editSeen.size<=4096) break;
+      state.editSeen.delete(key);
+    }
+    return changed.filter(({id}) => visibleInOffice(currentThread(id))).at(-1)?.project;
+  }
+
+  function updateSnapshot(snapshot,collaboration,autoReceipts) {
+    if (collaboration!==undefined) state.manualCollaboration = normalizeCollaboration(collaboration);
+    const sourceStatus = snapshot?.source_status;
+    state.source = sourceStatus==='ok' || sourceStatus==='partial' ? sourceStatus : 'unavailable';
+    if (state.source==='unavailable') {
+      if (snapshot?.visible_sections!==undefined) setVisibleSections(snapshot.visible_sections);
+      updateSidebar(snapshot?.sidebar);
+      state.coordinationStale = automaticEnabled();
+      syncDisplayedCollaboration();
+      refresh();
+      return;
+    }
+    const previousCollection = Date.parse(state.collectedAt);
+    const collectedAt = Date.parse(snapshot.collected_at);
+    if (Number.isFinite(previousCollection) && Number.isFinite(collectedAt) && collectedAt<previousCollection) {
+      refresh();
+      return;
+    }
+    state.collectedAt = snapshot.collected_at;
+    if (snapshot.visible_sections!==undefined) setVisibleSections(snapshot.visible_sections);
+    updateSidebar(snapshot.sidebar);
+    const projects = Array.isArray(snapshot.projects) ? snapshot.projects : [];
+    if (state.source==='ok') state.projectNames = new Map();
+    for (const project of projects) {
+      if (project?.id && project.name) state.projectNames.set(project.id,project.name);
+    }
+    const threads = Array.isArray(snapshot.threads) ? snapshot.threads : [];
+    const previousRoots = state.roots;
+    const previouslyActive = new Set(state.active.map(thread => thread.id));
+    const roots = new Map();
+    for (const thread of threads) {
+      if (!thread?.id || thread.parent_id || (thread.root_id && thread.root_id!==thread.id)) continue;
+      const seat = state.seats.get(thread.id);
+      roots.set(thread.id,seat ? {...thread,project_id:seat.project} : thread);
+    }
+    state.roots = roots;
+    state.agents = new Map();
+    for (const thread of threads) {
+      if (!thread?.id || roots.has(thread.id) || !roots.has(thread.root_id) || !hasActiveTurn(thread)) continue;
+      if (!state.agents.has(thread.root_id)) state.agents.set(thread.root_id,[]);
+      state.agents.get(thread.root_id).push({id:thread.id,status:thread.status});
+    }
+    for (const agents of state.agents.values()) {
+      agents.sort((a,b) => Number(b.status==='waiting')-Number(a.status==='waiting') || a.id.localeCompare(b.id));
+    }
+    state.recent = [...roots.values()].sort((a,b) => {
+      const lastA = Date.parse(a.last_activity) || 0;
+      const lastB = Date.parse(b.last_activity) || 0;
+      return lastB-lastA || a.id.localeCompare(b.id);
+    });
+    state.active = state.recent.filter(thread => hasActiveTurn(thread) || state.agents.has(thread.id));
+    const now = performance.now();
+    for (const id of state.waitingSince.keys()) {
+      if (roots.get(id)?.status!=='waiting') state.waitingSince.delete(id);
+    }
+    if (state.visible) {
+      const newlyWaiting = state.active.filter(thread => thread.status==='waiting' && previousRoots.get(thread.id)?.status!=='waiting');
+      for (const thread of newlyWaiting) state.waitingSince.set(thread.id,now);
+      if (newlyWaiting.length) stopRobotMotion();
+    }
+    updateCoordination(snapshot.coordination,autoReceipts,now);
+    const groups = [...(state.coordination?.groups ?? [])];
+    if (state.manualCollaboration) groups.push(state.manualCollaboration);
+    const linkedIds = new Set(groups.flatMap(group => [group.coordinator_id,...group.executors.map(item => item.thread_id)]));
+    state.remembered = new Map([...linkedIds].flatMap(id => {
+      const thread = roots.get(id) || previousRoots.get(id) || state.remembered.get(id);
+      return thread ? [[id,thread]] : [];
+    }));
+    for (const [id,thread] of roots) {
+      if (hasActiveTurn(thread) || state.agents.has(id)) {
+        state.departures.delete(id);
+        continue;
+      }
+      if (state.visible && previouslyActive.has(id)
+          && (thread.status==='completed' || thread.status==='interrupted')) {
+        state.departures.set(id,{thread,expires:now+EXIT_MS});
+      }
+    }
+    const focusEdit = collectEdits(now,previousCollection);
+    state.initialized = true;
+    refresh(focusEdit);
+  }
+
+  function setVisible(visible) {
+    state.visible = Boolean(visible);
+    stage.dataset.visible = String(state.visible);
+    if (!state.visible) {
+      if (settingsDialog.open) flushSettingText();
+      hideChatTitle();
+      stopRobotMotion();
+      state.waitingSince.clear();
+      stopPulses();
+      state.pendingDispatchPulses = [];
+      clearTimeout(state.timer);
+      clearTimeout(usageResetTimer);
+      usageTooltip.hidden = true;
+      state.timer = 0;
+      state.flashes.clear();
+      if (dialog.open) dialog.close();
+      return;
+    }
+    resize();
+    refresh();
+    if (showingUsage) renderUsagePlan();
+  }
+
+  function resize() {
+    hideChatTitle();
+    const {width,height} = stage.getBoundingClientRect();
+    if (!width || !height) return;
+    const ratio = Math.min(2,devicePixelRatio||1,Math.sqrt(3000000/(width*height)));
+    const scale = Math.min((width-24)/13.85,(height-24)/8.88);
+    view = {width,height,ratio,scale,floor:height*0.5+scale*2.06};
+    for (const target of [canvas,fallback]) {
+      const w = Math.round(width*ratio);
+      const h = Math.round(height*ratio);
+      if (target.width!==w) target.width = w;
+      if (target.height!==h) target.height = h;
+    }
+    if (state.visible && !showingUsage) {
+      arrangeAgentRobots();
+      updateGeometry();
+      updateMarkers();
+      paint();
+    }
+  }
+
+  function recolor() {
+    palette = names.map(name => rgb(colors[name][dark.matches?1:0]));
+    renderer?.setPalette();
+    paint();
+  }
+
+  function chooseRenderer() {
+    renderer = webgl();
+    paintKey = '';
+    if (renderer) softwareFrame = null;
+    canvas.hidden = !renderer;
+    fallback.hidden = Boolean(renderer);
+    avatars.clear();
+    recolor();
+  }
+
+  const settingsDialog = byId('office-settings');
+  const settingsForm = byId('office-settings-form');
+  function connectDialogHelp(modal, scrollArea = modal) {
+    const tooltip = modal.querySelector('.dialog-help-tooltip');
+    let hovered = null;
+    let focused = null;
+
+    function render() {
+      const button = hovered ?? focused;
+      tooltip.hidden = !button;
+      if (!button) return;
+      const description = byId(button.getAttribute('aria-describedby'));
+      tooltip.textContent = description.children.length
+        ? [...description.children].map(line => line.textContent).join('\n\n') : description.textContent;
+      const anchor = button.getBoundingClientRect();
+      const {width,height} = tooltip.getBoundingClientRect();
+      const viewport = document.documentElement;
+      tooltip.style.left = Math.max(8,Math.min(anchor.left,viewport.clientWidth-width-8))+'px';
+      tooltip.style.top = (anchor.bottom+height+14<viewport.clientHeight
+        ? anchor.bottom+6 : Math.max(8,anchor.top-height-6))+'px';
+    }
+
+    function dismiss() {
+      hovered = focused = null;
+      render();
+    }
+
+    for (const button of modal.querySelectorAll('.setting-help')) {
+      button.addEventListener('pointerenter',event => {
+        if (event.pointerType==='touch') return;
+        hovered = button;
+        render();
+      });
+      button.addEventListener('pointerleave',() => { hovered = null; render(); });
+      button.addEventListener('focus',() => { focused = button; render(); });
+      button.addEventListener('blur',() => { focused = null; render(); });
+    }
+    modal.addEventListener('keydown',event => {
+      if (event.key!=='Escape' || tooltip.hidden) return;
+      event.preventDefault();
+      dismiss();
+    });
+    modal.addEventListener('close',dismiss);
+    scrollArea.addEventListener('scroll',dismiss,{passive:true});
+    window.addEventListener('resize',dismiss);
+    return render;
+  }
+
+  const renderCollaborationHelp = connectDialogHelp(dialog);
+  const renderSettingsHelp = connectDialogHelp(settingsDialog,settingsForm.querySelector('.settings-fields'));
+  const settingsFields = settingsForm.querySelector('fieldset');
+  const settingsFeedback = byId('settings-feedback');
+  const loginItem = byId('office-login-item');
+  const updateButton = byId('check-office-update');
+  let appSettings = null;
+  let updateResult = '';
+  let updateVersion = '';
+  const aliases = byId('office-aliases');
+  let projectDirectories = [];
+  let projectDirectoryRequest = 0;
+  let browsingAlias = null;
+  const retrySettings = byId('retry-settings');
+  const settingsMetric = settingsForm.elements.namedItem('menu_bar_metric');
+  const settingsLanguage = settingsForm.elements.namedItem('language');
+  const settingsSection = settingsForm.elements.namedItem('coordination_section');
+  const settingsThreads = settingsForm.elements.namedItem('thread_projects');
+  const sectionMode = byId('visible-section-mode');
+  const sectionList = byId('visible-section-list');
+  const sectionNote = byId('visible-section-note');
+  const menuBarMetrics = new Set(['today_tokens','token_speed','plan_remaining']);
+  const languages = new Set(['zh-CN','en','system']);
+  let settingsBaseline;
+  let settingsLoading = false;
+  let settingInFlight = null;
+  const pendingSettings = new Map();
+  const failedSettings = new Map();
+  const invalidSettings = new Map();
+  const dirtySettingText = new Set();
+  const composingSettings = new Set();
+  let settingTextTimer = 0;
+  let settingsSaved = false;
+  let settingsLoadError = '';
+  let draftSections = new Set();
+  let sectionOptions = new Map();
+  let sectionOptionsKey = '';
+
+  function settingsMessage(message, isError = false) {
+    settingsFeedback.textContent = message;
+    settingsFeedback.toggleAttribute('data-error', isError);
+  }
+
+  function loadOfficeSettings() {
+    if (settingsLoading || settingsBaseline) return;
+    settingsLoading = true;
+    settingsLoadError = '';
+    settingsFields.disabled = true;
+    retrySettings.hidden = true;
+    settingsMessage(t('读取本机设置…'));
+    if (!window.webkit?.messageHandlers?.office) {
+      window.officeReceiveSettings(null, '请在 Mac 菜单栏应用里打开设置。', false);
+      return;
+    }
+    bridge({action:'loadSettings'});
+  }
+
+  function openOfficeSettings() {
+    if (settingsDialog.open) return;
+    closeOfficeDialogs(settingsDialog);
+    settingsDialog.showModal();
+    bridge({action:'loadAppSettings'});
+    bridge({action:'loadProjectDirectories'});
+    loadOfficeSettings();
+  }
+
+  function renderAppSettings() {
+    if (!appSettings) return;
+    const {version,revision,login,loginFailed} = appSettings;
+    const versionLabel = byId('office-version');
+    versionLabel.textContent = version ? version+(revision ? ' ('+revision+')' : '') : '—';
+    versionLabel.title = revision ? t('Git 提交 {0}',revision) : '';
+    loginItem.checked = login==='on' || login==='approval';
+    loginItem.disabled = !['on','off','approval'].includes(login);
+    byId('open-office-login-items').hidden = login!=='approval';
+    const note = loginFailed ? '无法修改登录项，请在系统设置中查看。' : {
+      approval:'请在系统设置中允许 Codex Office 登录时启动。',
+      unsupported:'此开关需要 macOS 13 或更高版本。旧版可在系统登录项中手动添加。',
+      unavailable:'系统暂时无法识别此应用的登录项。'
+    }[login];
+    const status = byId('office-login-status');
+    status.textContent = note ? t(note) : '';
+    status.hidden = !note;
+    renderOfficeUpdate();
+  }
+
+  function renderOfficeUpdate() {
+    const message = {
+      checking:'正在检查更新…',
+      unconfigured:'尚未配置公开发布渠道。',
+      noRelease:'暂未找到可公开获取的正式版本。',
+      current:'当前已是最新版本。',
+      available:'发现新版本 {0}。',
+      failed:'暂时无法检查更新，请稍后重试。'
+    }[updateResult];
+    const status = byId('office-update-status');
+    status.textContent = message ? t(message,updateVersion) : '';
+    status.hidden = !message;
+    updateButton.disabled = !appSettings || updateResult==='checking';
+    byId('office-release-actions').hidden = updateResult!=='available';
+  }
+
+  window.officeReceiveAppSettings = value => {
+    appSettings = value;
+    renderAppSettings();
+  };
+  window.officeReceiveUpdate = (result,version) => {
+    updateResult = result;
+    updateVersion = version;
+    renderOfficeUpdate();
+  };
+  loginItem.addEventListener('change',() => {
+    loginItem.disabled = true;
+    bridge({action:'setLoginItem',enabled:loginItem.checked});
+  });
+  updateButton.addEventListener('click',() => {
+    window.officeReceiveUpdate('checking','');
+    bridge({action:'checkUpdate'});
+  });
+  byId('open-office-login-items').addEventListener('click',() => bridge({action:'openLoginItems'}));
+  byId('open-office-release').addEventListener('click',() => bridge({action:'openRelease'}));
+
+  function renderSectionSettings() {
+    if (!settingsBaseline) return;
+    const {available,sections} = state.sidebar;
+    const options = new Map([...sections,[null,t('未分区')]]);
+    const saved = new Set([...(settingsBaseline.visible_sections ?? []),...draftSections]);
+    for (const id of saved) {
+      if (!options.has(id)) options.set(id,t('已保存的分区 · …{0}',id.slice(-8)));
+    }
+    const key = JSON.stringify([...options]);
+    if (key!==sectionOptionsKey) {
+      sectionOptionsKey = key;
+      sectionOptions = new Map();
+      const rows = [...options].map(([id,name]) => {
+        const row = document.createElement('label');
+        row.className = 'section-option';
+        if (!sections.has(id) && id!==null) row.title = id;
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.addEventListener('change', () => {
+          if (input.checked) draftSections.add(id);
+          else draftSections.delete(id);
+          applyVisibleSectionSetting();
+        });
+        sectionOptions.set(id,input);
+        const text = document.createElement('span');
+        text.textContent = name;
+        row.append(input,text);
+        return row;
+      });
+      sectionList.replaceChildren(...rows);
+    }
+    for (const [id,input] of sectionOptions) input.checked = draftSections.has(id);
+    sectionList.hidden = sectionMode.value==='all';
+    sectionNote.textContent = available ? t('可多选。全部取消勾选会隐藏所有聊天。')
+      : t('Codex 侧栏暂时无法读取。已保存的选择会保留。');
+    sectionNote.hidden = sectionList.hidden;
+  }
+
+  function aliasRow(path = '', name = '') {
+    const row = document.createElement('div');
+    row.className = 'alias-row';
+    const project = document.createElement('select');
+    project.className = 'alias-directory';
+    const browse = document.createElement('button');
+    browse.type = 'button';
+    browse.className = 'alias-browse';
+    const alias = document.createElement('input');
+    alias.maxLength = 80;
+    alias.value = name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'alias-remove';
+    project.addEventListener('change', () => setAliasDirectory(row, project.value));
+    browse.addEventListener('click', () => {
+      if (browsingAlias) return;
+      browsingAlias = row;
+      bridge({action:'chooseProjectDirectory',request:++projectDirectoryRequest,path:row.dataset.path});
+    });
+    remove.addEventListener('click', () => {
+      window.officeDropdowns?.remove(project);
+      row.remove();
+      renderAliasDirectories();
+      commitSettingText('projects');
+    });
+    row.dataset.path = path;
+    if (name) row.dataset.named = '';
+    row.append(project, browse, alias, remove);
+    return row;
+  }
+
+  function renderAliasDirectories() {
+    const selectedPaths = new Set([...aliases.children].map(row => row.dataset.path));
+    for (const row of aliases.children) {
+      const path = row.dataset.path;
+      const project = row.querySelector('select');
+      const placeholder = new Option(t(projectDirectories.length ? '选择 Codex 项目' : '暂无 Codex 项目'), '');
+      placeholder.disabled = true;
+      placeholder.hidden = Boolean(path);
+      const options = projectDirectories.map(directory => {
+        const option = new Option(directory.name ? `${directory.name} · ${directory.path}` : directory.path, directory.path);
+        option.disabled = directory.path !== path && selectedPaths.has(directory.path);
+        return option;
+      });
+      if (path && !options.some(option => option.value === path)) options.unshift(new Option(path, path));
+      project.setAttribute('aria-label', t('项目目录'));
+      project.title = path;
+      project.replaceChildren(placeholder, ...options);
+      project.value = path;
+      const alias = row.querySelector('input');
+      alias.placeholder = t('显示名称');
+      alias.setAttribute('aria-label', t('项目显示名称'));
+      row.querySelector('.alias-browse').textContent = t('浏览…');
+      row.querySelector('.alias-remove').textContent = t('移除');
+    }
+    window.officeDropdowns?.refresh();
+  }
+
+  function setAliasDirectory(row, path) {
+    const alias = row.querySelector('input');
+    if ([...aliases.children].some(other => other !== row && other.dataset.path === path)) {
+      invalidSettings.set('projects', '这个目录已有别名。');
+      updateSettingFeedback();
+      return;
+    }
+    if (row.dataset.path !== path) {
+      row.dataset.path = path;
+      renderAliasDirectories();
+      commitSettingText('projects');
+    }
+    if (!alias.value.trim()) alias.focus();
+  }
+
+  window.officeReceiveProjectDirectories = directories => {
+    projectDirectories = directories;
+    renderAliasDirectories();
+  };
+
+  window.officeReceiveProjectDirectory = (path, request) => {
+    if (request !== projectDirectoryRequest || !browsingAlias) return;
+    const row = browsingAlias;
+    browsingAlias = null;
+    if (path && settingsDialog.open && row.isConnected) setAliasDirectory(row, path);
+  };
+
+  window.officeOpenSettings = openOfficeSettings;
+  window.officeReceiveSettings = (office, error, saved, sidebar) => {
+    const completed = settingInFlight;
+    settingInFlight = null;
+    settingsLoading = false;
+    updateSidebar(sidebar);
+    if (office) {
+      const firstLoad = !settingsBaseline;
+      settingsBaseline = {
+        language: languages.has(office.language) ? office.language : 'zh-CN',
+        menu_bar_metric: menuBarMetrics.has(office.menu_bar_metric) ? office.menu_bar_metric : 'token_speed',
+        coordination_section: office.coordination_section ?? null,
+        projects: office.projects ?? {},
+        thread_projects: office.thread_projects ?? {},
+        visible_sections: normalizeVisibleSections(office.visible_sections),
+      };
+      if (firstLoad) {
+        settingsLanguage.value = settingsBaseline.language;
+        settingsMetric.value = settingsBaseline.menu_bar_metric;
+        settingsSection.value = settingsBaseline.coordination_section ?? '';
+        settingsThreads.value = JSON.stringify(settingsBaseline.thread_projects, null, 2);
+        aliases.replaceChildren(...Object.entries(settingsBaseline.projects).map(([path, name]) => aliasRow(path, name)));
+        renderAliasDirectories();
+        sectionMode.value = settingsBaseline.visible_sections===null ? 'all' : 'selected';
+        draftSections = new Set(settingsBaseline.visible_sections ?? []);
+      }
+      if (saved) settingsSaved = true;
+      renderSectionSettings();
+      setVisibleSections(settingsBaseline.visible_sections);
+      refresh();
+    } else if (completed) {
+      const [key,value] = completed;
+      if (!pendingSettings.has(key) && !dirtySettingText.has(key) && !invalidSettings.has(key)) {
+        failedSettings.set(key,{value,error});
+      }
+    } else {
+      settingsLoadError = error;
+    }
+    settingsFields.disabled = !settingsBaseline;
+    window.officeDropdowns?.refresh();
+    sendNextSetting();
+  };
+
+  function updateSettingFeedback() {
+    const failure = settingsLoadError || failedSettings.values().next().value?.error;
+    const invalid = invalidSettings.values().next().value;
+    retrySettings.hidden = !failure;
+    if (settingsLoading) settingsMessage(t('读取本机设置…'));
+    else if (failure || invalid) {
+      const message = failure || invalid;
+      settingsMessage(typeof message==='string' ? t(message) : message[i18n.language],true);
+    }
+    else if (settingInFlight) settingsMessage(t('正在保存…'));
+    else settingsMessage(settingsSaved ? t('已保存') : '');
+  }
+
+  function sendNextSetting() {
+    if (settingsBaseline && !settingInFlight) {
+      for (const [key,value] of pendingSettings) {
+        pendingSettings.delete(key);
+        if (JSON.stringify(value)===JSON.stringify(settingsBaseline[key])) continue;
+        settingInFlight = [key,value];
+        bridge({action:'saveSettings',changes:{[key]:value}});
+        break;
+      }
+    }
+    updateSettingFeedback();
+  }
+
+  function queueSetting(key,value) {
+    if (!settingsBaseline) return;
+    failedSettings.delete(key);
+    invalidSettings.delete(key);
+    pendingSettings.set(key,value);
+    sendNextSetting();
+  }
+
+  function applyVisibleSectionSetting() {
+    renderSectionSettings();
+    queueSetting('visible_sections',sectionMode.value==='all' ? null : [...draftSections]);
+  }
+
+  function settingTextKey(target) {
+    if (target===settingsSection) return 'coordination_section';
+    if (target===settingsThreads) return 'thread_projects';
+    if (target.matches('.alias-row input')) return 'projects';
+    return null;
+  }
+
+  function commitSettingText(key) {
+    if (!settingsBaseline || composingSettings.has(key)) return;
+    dirtySettingText.delete(key);
+    pendingSettings.delete(key);
+    failedSettings.delete(key);
+    invalidSettings.delete(key);
+    try {
+      if (key==='coordination_section') {
+        queueSetting(key,settingsSection.value.trim() || null);
+      } else if (key==='thread_projects') {
+        const assignments = JSON.parse(settingsThreads.value.trim() || '{}');
+        if (!assignments || Array.isArray(assignments) || typeof assignments!=='object') {
+          throw new Error('聊天归属须为 JSON 对象。');
+        }
+        queueSetting(key,assignments);
+      } else if (key==='projects') {
+        const used = [...aliases.children].map(row => ({row,path:row.dataset.path,name:row.querySelector('input').value.trim()}))
+          .filter(({row,name}) => name || 'named' in row.dataset);
+        if (used.some(({path,name}) => !path.startsWith('/') || !name) ||
+            new Set(used.map(({path}) => path)).size!==used.length) {
+          throw new Error('每个别名需要不同的项目绝对路径和显示名称。');
+        }
+        for (const {row} of used) row.dataset.named = '';
+        queueSetting(key,Object.fromEntries(used.map(({path,name}) => [path,name])));
+      }
+    } catch (error) {
+      invalidSettings.set(key,error instanceof SyntaxError ? '聊天归属 JSON 格式不正确。' : error.message);
+      updateSettingFeedback();
+    }
+  }
+
+  function flushSettingText() {
+    clearTimeout(settingTextTimer);
+    for (const key of dirtySettingText) commitSettingText(key);
+  }
+
+  function scheduleSettingText(key) {
+    dirtySettingText.add(key);
+    pendingSettings.delete(key);
+    failedSettings.delete(key);
+    invalidSettings.delete(key);
+    clearTimeout(settingTextTimer);
+    settingTextTimer = setTimeout(flushSettingText,400);
+    updateSettingFeedback();
+  }
+
+  byId('show-settings').addEventListener('click', openOfficeSettings);
+  byId('close-settings').addEventListener('click', () => {
+    flushSettingText();
+    settingsDialog.close();
+  });
+  settingsDialog.addEventListener('close',flushSettingText);
+  retrySettings.addEventListener('click', () => {
+    if (!settingsBaseline) return loadOfficeSettings();
+    for (const [key,{value}] of failedSettings) pendingSettings.set(key,value);
+    failedSettings.clear();
+    sendNextSetting();
+  });
+  sectionMode.addEventListener('change',applyVisibleSectionSetting);
+  settingsMetric.addEventListener('change', () => queueSetting('menu_bar_metric',settingsMetric.value));
+  settingsLanguage.addEventListener('change', () => queueSetting('language',settingsLanguage.value));
+  byId('add-alias').addEventListener('click', () => {
+    const row = aliasRow();
+    aliases.append(row);
+    renderAliasDirectories();
+    const project = row.querySelector('select');
+    if ([...project.options].some(option => !option.disabled)) window.officeDropdowns?.focus(project);
+    else row.querySelector('.alias-browse').focus();
+  });
+  settingsForm.addEventListener('compositionstart', event => {
+    const key = settingTextKey(event.target);
+    if (key) composingSettings.add(key);
+  });
+  settingsForm.addEventListener('compositionend', event => {
+    const key = settingTextKey(event.target);
+    if (!key) return;
+    composingSettings.delete(key);
+    scheduleSettingText(key);
+  });
+  settingsForm.addEventListener('input', event => {
+    const key = settingTextKey(event.target);
+    if (key && !event.isComposing) scheduleSettingText(key);
+  });
+  settingsForm.addEventListener('change', event => {
+    const key = settingTextKey(event.target);
+    if (key) commitSettingText(key);
+  });
+  settingsForm.addEventListener('focusout', event => {
+    const key = settingTextKey(event.target);
+    if (key && dirtySettingText.has(key)) commitSettingText(key);
+  });
+  settingsForm.addEventListener('submit', event => {
+    event.preventDefault();
+    flushSettingText();
+  });
+
+  const usagePanel = byId('usage-panel');
+  const officeButton = byId('show-office');
+  const usageButton = byId('show-usage');
+  const usageDetailButton = byId('open-usage-detail');
+  usageDetailButton.hidden = !nativeToolbar;
+  usageDetailButton.addEventListener('click',() => bridge({action:'openUsageDetails'}));
+  const usageTooltip = byId('usage-tooltip');
+  const usageRecent = byId('usage-recent');
+  const usageBars = byId('usage-bars');
+  const quotaRows = [...usagePanel.querySelectorAll('.usage-plan')];
+  const usageNumber = new Intl.NumberFormat('en-US');
+  const compactUsageNumber = new Intl.NumberFormat('en-US', {notation:'compact',maximumFractionDigits:1});
+  const compactUsageCurrency = new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',
+    notation:'compact',maximumFractionDigits:1});
+  let usagePercent,usageResetTime,usageShortDay,usageCurrency;
+  function configureUsageFormatters() {
+    const {language} = i18n;
+    usagePercent = new Intl.NumberFormat(language, {style:'percent',maximumFractionDigits:1});
+    usageResetTime = new Intl.DateTimeFormat(language, {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+    usageShortDay = new Intl.DateTimeFormat(language, {month:'short',day:'numeric'});
+    usageCurrency = new Intl.NumberFormat(language, {style:'currency',currency:'USD',currencyDisplay:'narrowSymbol',
+      minimumFractionDigits:2,maximumFractionDigits:4});
+  }
+  let usageResetTimer = 0;
+  const usageCount = value => Number.isSafeInteger(value) && value>=0 ? value : null;
+  const usageFormat = value => value===null ? '—' : usageNumber.format(value);
+  const usageHasData = status => status==='ok' || status==='partial';
+  const usageStates = new Set(['ok','partial','loading','unavailable']);
+  const usageState = value => usageStates.has(value) ? value : 'unavailable';
+  const usageDate = value => typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const usageUUID = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
+  let usage = {live_status:'loading',history_status:'loading'};
+  let lastUsageHistory = null;
+  let renderedUsageLive = '';
+  let renderedUsageHistory = '';
+  let selectedUsageDay = null;
+  let showingUsage = false;
+  let usagePoints = [];
+  let usageDayRequest = 0;
+  let usageDayKeyRequested = '';
+  const usageRows = new Map();
+  let lastToolbarState = '';
+
+  function updateToolbarState() {
+    if (!nativeToolbar) return;
+    const message = {
+      action:'toolbarState',
+      view:showingUsage?'usage':'office',
+      source:source.textContent,
+      sourceStatus:source.dataset.status,
+      runningCount:source.dataset.running==='true' ? layout.active.length-layout.waiting.length : 0,
+      waitingCount:layout.waiting.length,
+      collaborationTitle:collaborationButton.textContent
+    };
+    const key = JSON.stringify(message);
+    if (key===lastToolbarState) return;
+    lastToolbarState = key;
+    bridge(message);
+  }
+
+  function usageText(element, text) {
+    if (element.textContent!==text) element.textContent = text;
+  }
+
+  function usageStatus(id, status, text) {
+    const element = byId(id);
+    element.dataset.status = status;
+    element.hidden = !text;
+    usageText(element,text);
+  }
+
+  function renderUsageLive() {
+    const status = usageState(usage?.live_status);
+    const rate = usageHasData(status) ? usageCount(usage?.tokens_per_minute) : null;
+    const recent = usageHasData(status) && Array.isArray(usage?.recent) ? usage.recent : [];
+    const key = JSON.stringify([status,rate,recent]);
+    if (key===renderedUsageLive) return;
+    renderedUsageLive = key;
+
+    usageText(byId('usage-rate'),usageFormat(rate));
+    const liveMessages = {
+      loading:t('正在读取最近用量…'),
+      partial:t('部分日志未能读取。'),
+      unavailable:t('暂时无法读取最近用量。'),
+      ok:rate===null?t('暂无速率记录。'):''
+    };
+    usageStatus('usage-live-status',status,liveMessages[status]);
+
+    const focused = document.activeElement;
+    const visible = new Set();
+    for (const item of recent) {
+      const id = item?.id;
+      const count = usageCount(item?.tokens);
+      if (typeof id!=='string' || !usageUUID.test(id) || count===null || visible.has(id)) continue;
+      const index = visible.size;
+      visible.add(id);
+      let row = usageRows.get(id);
+      if (!row) {
+        const element = document.createElement('li');
+        const button = document.createElement('button');
+        const title = document.createElement('span');
+        const tally = document.createElement('span');
+        button.type = 'button';
+        tally.className = 'usage-tally';
+        button.append(title,tally);
+        button.addEventListener('click',() => openChat(id));
+        element.append(button);
+        row = {element,button,title,tally};
+        usageRows.set(id,row);
+      }
+      const name = item.title===undefined ? t('聊天 …{0}',id.slice(-8)) : chatTitle(item);
+      usageText(row.title,name);
+      usageText(row.tally,usageFormat(count)+' tokens');
+      row.button.title = name;
+      if (usageRecent.children[index]!==row.element) {
+        usageRecent.insertBefore(row.element,usageRecent.children[index] ?? null);
+      }
+    }
+    for (const [id,row] of usageRows) {
+      if (visible.has(id)) continue;
+      row.element.remove();
+      usageRows.delete(id);
+    }
+    usageRecent.hidden = !visible.size;
+    if (focused?.closest('#usage-recent') && document.activeElement!==focused) focused.focus({preventScroll:true});
+    else if (focused && !focused.isConnected) usagePanel.focus({preventScroll:true});
+    const empty = byId('usage-recent-empty');
+    empty.hidden = Boolean(visible.size);
+    usageText(empty,status==='loading'?t('正在读取…'):status==='unavailable'?t('暂无数据'):t('最近 1 分钟未记录聊天用量'));
+  }
+
+  function shortUsageDay(day) {
+    return usageShortDay.format(new Date(day+'T12:00:00'));
+  }
+
+  function usageDayKey(date) {
+    return [date.getFullYear(),date.getMonth()+1,date.getDate()].map((part,i) => String(part).padStart(i ? 2 : 4,'0')).join('-');
+  }
+
+  function estimatedUsageCost(count, cost, pricedTokens, partialLogs = false) {
+    if (count===0 && !partialLogs) return {amount:usageCurrency.format(0),partial:false};
+    if (!Number.isFinite(cost) || cost<0 || !usageCount(pricedTokens) || !count) return null;
+    const amount = cost>0 && cost<0.0001 ? '< '+usageCurrency.format(0.0001) : '≈ '+usageCurrency.format(cost);
+    return {amount,partial:partialLogs || pricedTokens<count};
+  }
+
+  function usageCost(estimate, includeCoverage = true) {
+    if (!estimate) return t('API 费用预估暂无数据');
+    const label = t('API 费用预估 {0}',estimate.amount);
+    return includeCoverage && estimate.partial ? label+' · '+t('仅部分用量可估价') : label;
+  }
+
+  function usageBreakdown(record, count) {
+    const input = usageCount(record?.input_tokens);
+    const output = usageCount(record?.output_tokens);
+    const covered = usageCount(record?.breakdown_tokens);
+    const cached = usageCount(record?.cached_input_tokens);
+    const denominator = usageCount(record?.cache_reported_input_tokens);
+    const splitPartial = Boolean(count && covered!==count);
+    const cacheRate = denominator && cached!==null ? usagePercent.format(cached/denominator) : null;
+    const cachePartial = Boolean(cacheRate && (splitPartial || denominator!==input));
+    return {input,output,splitPartial,cacheRate,cachePartial,cached,denominator};
+  }
+
+  function renderUsageBreakdown(point) {
+    const {input,output,splitPartial,cacheRate,cachePartial,cached,denominator} = point.breakdown;
+    const inputField = byId('usage-day-input');
+    const outputField = byId('usage-day-output');
+    const cacheField = byId('usage-day-cache');
+    usageText(inputField,usageFormat(input));
+    usageText(outputField,usageFormat(output));
+    usageText(cacheField,cacheRate ?? '—');
+    const cacheCount = byId('usage-day-cache-count');
+    cacheCount.hidden = !cacheRate;
+    usageText(cacheCount,cacheRate ? t('{0} / {1} 输入 Token',usageFormat(cached),usageFormat(denominator)) : '');
+    const splitNote = input===null && point.count>0 ? t('本机日志暂无当日 Token 明细。')
+      : splitPartial ? t('输入和输出仅统计有明细的用量。') : '';
+    inputField.parentElement.title = outputField.parentElement.title = splitNote;
+    cacheField.parentElement.title = cachePartial ? t('缓存命中率仅统计记录了缓存数据的输入。')
+      : input>0 && !cacheRate ? t('本机日志暂无当日缓存数据。') : '';
+  }
+
+  function showUsageTooltip(index,button) {
+    const point = usagePoints[index];
+    if (!showingUsage || !point || !button) return;
+    usageText(byId('usage-tooltip-date'),point.day);
+    usageText(byId('usage-tooltip-tokens'),point.count===null?t('暂无数据'):usageFormat(point.count)+' tokens');
+    usageText(byId('usage-tooltip-cost'),usageCost(point.estimate));
+    const {input,output,splitPartial,cacheRate,cachePartial} = point.breakdown;
+    const split = byId('usage-tooltip-split');
+    split.hidden = input===null || output===null;
+    usageText(split,split.hidden ? '' : t('输入 {0} · 输出 {1}',usageFormat(input),usageFormat(output)) +
+      (splitPartial ? ' · '+t('部分明细') : ''));
+    const cache = byId('usage-tooltip-cache');
+    cache.hidden = !cacheRate;
+    usageText(cache,cacheRate ? t('缓存命中率 {0}',cacheRate)+(cachePartial?' · '+t('部分明细'):'') : '');
+    usageTooltip.hidden = false;
+    const anchor = button.getBoundingClientRect();
+    const rect = usageTooltip.getBoundingClientRect();
+    const viewport = document.documentElement;
+    usageTooltip.style.left = Math.max(8,Math.min(anchor.x+(anchor.width-rect.width)/2,viewport.clientWidth-rect.width-8))+'px';
+    const top = anchor.top-rect.height-6;
+    usageTooltip.style.top = (top>=8 ? top : Math.min(viewport.clientHeight-rect.height-8,anchor.bottom+6))+'px';
+  }
+
+  function requestUsageDay(point) {
+    const loading = usage?.history_status==='loading';
+    const key = JSON.stringify([point.day,point.count,i18n.language,loading]);
+    if (usageDayKeyRequested===key) return;
+    usageDayKeyRequested = key;
+    byId('usage-ranking').replaceChildren();
+    const request = ++usageDayRequest;
+    if (loading) {
+      usageStatus('usage-ranking-status','loading',t('历史更新完成后将显示当日会话用量。'));
+      return;
+    }
+    usageStatus('usage-ranking-status','loading',t('正在读取…'));
+    bridge({action:'usageDay',day:point.day,request});
+  }
+
+  window.officeReceiveUsageDay = (data,request) => {
+    if (request!==usageDayRequest || !showingUsage || data?.day!==selectedUsageDay) return;
+    if (data.unavailable) {
+      usageStatus('usage-ranking-status','unavailable',t('暂时无法读取当日会话用量。'));
+      return;
+    }
+    const rows = Array.isArray(data.sessions) ? data.sessions : [];
+    const list = byId('usage-ranking');
+    list.replaceChildren();
+    for (const item of rows) {
+      if (typeof item.id!=='string' || !usageUUID.test(item.id) || usageCount(item.tokens)===null) continue;
+      const row = document.createElement('li');
+      const button = document.createElement('button');
+      const name = document.createElement('span');
+      const tokens = document.createElement('span');
+      button.type = 'button';
+      name.textContent = typeof item.title==='string' && item.title.trim() ? item.title : t('聊天 …{0}',item.id.slice(-8));
+      button.title = name.textContent;
+      tokens.className = 'usage-tally';
+      tokens.textContent = usageFormat(item.tokens)+' tokens';
+      button.append(name,tokens);
+      button.addEventListener('click',() => openChat(item.id));
+      row.append(button);
+      list.append(row);
+    }
+    const note = !list.children.length ? t('这一天没有会话用量')
+      : data.total_sessions>list.children.length ? t('显示前 {0} 个会话，共 {1} 个',list.children.length,data.total_sessions) : '';
+    usageStatus('usage-ranking-status','ok',note);
+  };
+
+  function selectUsagePoint(index, focus = false) {
+    const point = usagePoints[index];
+    if (!point) return;
+    selectedUsageDay = point.day;
+    for (const [i,button] of [...usageBars.children].entries()) {
+      button.tabIndex = i===index ? 0 : -1;
+      button.setAttribute('aria-pressed',String(i===index));
+    }
+    usageText(byId('usage-day-detail'),point.label);
+    renderUsageBreakdown(point);
+    usageText(byId('usage-ranking-title'),t('{0} 会话用量排行',point.day));
+    requestUsageDay(point);
+    if (focus) usageBars.children[index].focus();
+  }
+
+  function renderUsageHistory() {
+    const status = usageState(usage?.history_status);
+    const history = lastUsageHistory?.data;
+    const key = JSON.stringify([status,lastUsageHistory]);
+    if (key===renderedUsageHistory) return;
+    renderedUsageHistory = key;
+
+    const firstDay = usageDate(history?.first_day) ? history.first_day : null;
+    const historyMessages = {
+      loading:history?t('正在更新本机历史，显示上次统计。'):t('正在读取本机历史…'),
+      partial:history?t('只显示目前读到的日志。'):t('部分日志未能读取，暂无可显示的历史。'),
+      unavailable:t('暂时无法读取本机历史。'),
+      ok:firstDay?'':t('本机日志暂无用量记录。')
+    };
+    usageStatus('usage-history-status',status,historyMessages[status]);
+    const coverage = byId('usage-coverage');
+    usageText(coverage,firstDay?t('最早用量记录：{0}',firstDay):'');
+    byId('usage-history-placeholder').hidden = status!=='loading' || Boolean(history);
+    byId('usage-history').hidden = !history;
+    if (!history) {
+      usageDayKeyRequested = '';
+      usageTooltip.hidden = true;
+      return;
+    }
+
+    const records = Array.isArray(history.days) ? history.days : [];
+    const days = new Map(records.filter(point => usageDate(point?.day)).map(point => [point.day,point]));
+    const priceDate = usageDate(history.prices_updated_at) ? history.prices_updated_at : null;
+    usageText(byId('usage-price-note'),priceDate
+      ? t('按 {0} 的官方标准 API 单价估算（USD），与套餐扣费无关。',priceDate)
+      : t('有模型和 Token 明细时，按官方标准 API 单价估算（USD）。'));
+    const lastDay = records.length===30 && usageDate(records[29]?.day) ? records[29].day : usageDayKey(new Date());
+    const end = new Date(lastDay+'T12:00:00');
+    const followToday = selectedUsageDay===usagePoints.at(-1)?.day;
+    usagePoints = Array.from({length:30},(_,i) => {
+      const date = new Date(end);
+      date.setDate(date.getDate()-29+i);
+      const day = usageDayKey(date);
+      const record = days.get(day);
+      const count = usageCount(record?.tokens);
+      const label = day+' · '+(count===null?t('暂无数据'):usageFormat(count)+' tokens');
+      const estimate = estimatedUsageCost(count,record?.estimated_usd,record?.priced_tokens,lastUsageHistory.status==='partial');
+      return {day,count,label,estimate,breakdown:usageBreakdown(record,count)};
+    });
+    const peak = usagePoints.reduce((best,point) => point.count>0 && (!best || point.count>=best.count) ? point : best,null);
+    const max = peak?.count ?? 1;
+    usageText(byId('usage-peak-date'),peak ? '· '+shortUsageDay(peak.day) : '');
+    usageText(byId('usage-peak'),peak ? usageFormat(peak.count)+' tokens' : '—');
+    const peakCost = byId('usage-peak-cost');
+    usageText(peakCost,peak ? usageCost(peak.estimate,false) : '');
+    peakCost.title = peak?.estimate?.partial ? usageCost(peak.estimate) : '';
+    for (const [i,point] of usagePoints.entries()) {
+      let button = usageBars.children[i];
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.append(document.createElement('span'));
+        button.addEventListener('click',() => selectUsagePoint(i));
+        button.addEventListener('pointerenter',event => {
+          if (event.pointerType!=='touch') showUsageTooltip(i,button);
+        });
+        button.addEventListener('pointerleave',() => { usageTooltip.hidden = true; });
+        button.addEventListener('focus',() => showUsageTooltip(i,button));
+        button.addEventListener('blur',() => { usageTooltip.hidden = true; });
+        usageBars.append(button);
+      }
+      button.setAttribute('aria-label',point.label+' · '+usageCost(point.estimate));
+      button.dataset.amount = point.count===null?'missing':point.count===0?'zero':'positive';
+      button.style.setProperty('--bar-height',((point.count ?? 0)/max*100)+'%');
+    }
+    const selected = usagePoints.findIndex(point => point.day===selectedUsageDay);
+    selectUsagePoint(followToday || selected<0 ? usagePoints.length-1 : selected);
+    usageText(byId('usage-total'),usageFormat(usageCount(history.total_tokens)));
+    usageText(byId('usage-days'),usageFormat(usageCount(history.active_days)));
+    usageText(byId('usage-start'),shortUsageDay(usagePoints[0].day));
+    usageText(byId('usage-end'),shortUsageDay(lastDay)+' · '+t('今日'));
+  }
+
+  function renderUsagePlan() {
+    clearTimeout(usageResetTimer);
+    const now = Date.now();
+    const windows = (usage?.quota_windows ?? [usage?.quota]).map(quota => ({
+      percent:quota?.remaining_percent, minutes:quota?.window_minutes, reset:Date.parse(quota?.resets_at)
+    })).filter(({percent,minutes,reset}) => Number.isFinite(percent) && percent>=0 && percent<=100 &&
+      Number.isInteger(minutes) && minutes>0 && reset>now);
+    let nextUpdate = Infinity;
+    for (const [index,row] of quotaRows.entries()) {
+      const window = windows[index];
+      row.hidden = index>0 && !window;
+      if (!row.hidden) nextUpdate = Math.min(nextUpdate,renderQuotaRow(row,window,now));
+    }
+    if (state.visible && showingUsage && Number.isFinite(nextUpdate)) {
+      usageResetTimer = setTimeout(renderUsagePlan,nextUpdate);
+    }
+  }
+
+  function renderQuotaRow(row,window,now) {
+    const label = row.querySelector('.usage-plan-label');
+    const amount = row.querySelector('.usage-plan-percent');
+    const note = row.querySelector('.usage-plan-note');
+    const countdown = row.querySelector('.usage-plan-countdown');
+    const progress = row.querySelector('progress');
+    countdown.hidden = progress.hidden = !window;
+    if (!window) {
+      usageText(label,t('套餐余量'));
+      usageText(amount,'—');
+      usageText(note,t('本机暂无有效记录'));
+      return Infinity;
+    }
+    const {percent,minutes,reset} = window;
+    const remaining = reset-now;
+    if (progress.value!==percent) progress.value = percent;
+    usageText(label,t(minutes===300 ? '5 小时额度剩余' : minutes===10080 ? '周额度剩余' : '套餐余量'));
+    usageText(amount,usagePercent.format(percent/100));
+    const period = minutes%1440===0 ? t('{0} 天',minutes/1440)
+      : minutes%60===0 ? t('{0} 小时',minutes/60) : t('{0} 分钟',minutes);
+    usageText(note,t('本机记录 · {0}窗口 · {1} 重置',period,usageResetTime.format(reset)));
+    const minutesLeft = Math.ceil(remaining/60_000);
+    const days = Math.floor(minutesLeft/1440);
+    const hours = Math.floor(minutesLeft/60)%24;
+    const parts = [];
+    if (days) parts.push(t('{0} 天',days));
+    if (hours || days) parts.push(t('{0} 小时',hours));
+    parts.push(t('{0} 分钟',minutesLeft%60));
+    usageText(countdown,t('重置倒计时 {0}',parts.join(' ')));
+    return remaining-(minutesLeft-1)*60_000;
+  }
+
+  function showUsageView(visible) {
+    if (showingUsage===visible) return;
+    closeOfficeDialogs();
+    showingUsage = visible;
+    byId('office-view').hidden = visible;
+    usagePanel.hidden = !visible;
+    officeButton.setAttribute('aria-pressed',String(!visible));
+    usageButton.setAttribute('aria-pressed',String(visible));
+    usageTooltip.hidden = true;
+    updateToolbarState();
+    if (visible) {
+      stopRobotMotion();
+      stopPulses();
+      renderedUsageHistory = usageDayKeyRequested = '';
+      renderUsageLive();
+      renderUsageHistory();
+      renderUsagePlan();
+    } else {
+      clearTimeout(usageResetTimer);
+      resize();
+      refresh();
+    }
+  }
+
+  window.officeOpenUsage = () => showUsageView(true);
+  window.officeSetUsage = value => {
+    usage = value;
+    const historyStatus = usageState(usage?.history_status);
+    if (usageHasData(historyStatus)) lastUsageHistory = usage.history ? {data:usage.history,status:historyStatus} : null;
+    else if (historyStatus!=='loading') lastUsageHistory = null;
+    const status = usageState(usage?.live_status);
+    const rate = usageHasData(status) ? usageCount(usage?.tokens_per_minute) : null;
+    const todayStatus = usageState(usage?.today_status);
+    const today = usageHasData(todayStatus) ? usageCount(usage?.today_tokens) : null;
+    const cost = usage?.today_estimated_usd;
+    const todayCost = estimatedUsageCost(today,cost,usage?.today_priced_tokens,todayStatus==='partial');
+    const displayCost = todayCost && cost>=1000 ? '≈ '+compactUsageCurrency.format(cost) : todayCost?.amount;
+    usageText(byId('office-tokens-today'),today===null ? '—' : compactUsageNumber.format(today)+' tokens');
+    usageText(byId('office-token-rate'),rate===null ? '—' : compactUsageNumber.format(rate)+'/min');
+    byId('office-tokens-today').title = usageFormat(today)+(todayStatus==='partial'?t('（部分日志）'):'');
+    byId('office-token-rate').title = usageFormat(rate)+(status==='partial'?t('（部分日志）'):'');
+    usageText(byId('office-cost-today'),displayCost ?? '—');
+    byId('office-cost-today').title = usageCost(todayCost);
+    if (showingUsage) {
+      renderUsageLive();
+      renderUsageHistory();
+      renderUsagePlan();
+    }
+  };
+  usageButton.addEventListener('click',window.officeOpenUsage);
+  officeButton.addEventListener('click',() => showUsageView(false));
+  usagePanel.addEventListener('scroll',() => { usageTooltip.hidden = true; },{passive:true});
+  window.addEventListener('resize',() => { usageTooltip.hidden = true; });
+  usagePanel.addEventListener('keydown',event => {
+    if (event.key==='Escape') {
+      usageTooltip.hidden = true;
+      event.preventDefault();
+    }
+  });
+  usageBars.addEventListener('keydown',event => {
+    if (!event.target.matches('button')) return;
+    const current = usagePoints.findIndex(point => point.day===selectedUsageDay);
+    const last = usagePoints.length-1;
+    const index = {ArrowLeft:Math.max(0,current-1),ArrowRight:Math.min(last,current+1),Home:0,End:last}[event.key];
+    if (typeof index!=='number') return;
+    event.preventDefault();
+    selectUsagePoint(index,true);
+  });
+
+  function locateWaiting() {
+    if (!layout.waiting.length) return;
+    showUsageView(false);
+    const index = layout.waiting.findIndex(thread => thread.id===state.selected);
+    const thread = layout.waiting[(index+1)%layout.waiting.length];
+    closeOfficeDialogs();
+    selectChat(thread.id);
+  }
+
+  window.officeLocateWaiting = locateWaiting;
+  window.officeOpenCollaboration = openCollaboration;
+  waitingCount.addEventListener('click',locateWaiting);
+  collaborationButton.addEventListener('click',openCollaboration);
+  byId('dismiss-collaboration').addEventListener('click',() => dialog.close());
+  byId('end-collaboration').addEventListener('click',() => {
+    if (state.automaticDisplay) return;
+    saveManualCollaboration(null);
+    dialog.close();
+  });
+  coordinatorChat.addEventListener('click',() => openChat(state.collaboration?.coordinator_id));
+  groupPicker.addEventListener('change',() => {
+    state.pinnedCoordinator = groupPicker.value;
+    syncDisplayedCollaboration();
+    refresh();
+  });
+  coordinatorPicker.addEventListener('change',() => {
+    state.draftCoordinator = coordinatorPicker.value;
+    state.draftExecutors.delete(state.draftCoordinator);
+    syncDialog();
+    window.officeDropdowns?.focus(coordinatorPicker);
+  });
+  linkForm.addEventListener('submit',event => {
+    event.preventDefault();
+    if (state.automaticDisplay || state.collaboration) return;
+    const {coordinator,chosen} = syncDraft(state.recent);
+    if (submitLink.disabled) return;
+    const executors = chosen.map(thread => ({thread_id:thread.id,received:false}));
+    saveManualCollaboration({coordinator_id:coordinator.id,executors,dispatched_at:new Date().toISOString()});
+    dialog.close();
+    startPulses(executors.map(item => item.thread_id),false);
+  });
+  function threadAtPoint(target,x,y) {
+    const button = target?.closest?.('button[data-thread-id]');
+    if (button) return button.dataset.threadId;
+    if ((target!==canvas && target!==fallback) || !view) return null;
+    const bounds = stage.getBoundingClientRect();
+    const left = x-bounds.left;
+    const top = y-bounds.top;
+    let closest = null;
+    let distance = Infinity;
+    for (const role of [...layout.roles,...layout.agents]) {
+      const reach = role.parent ? Math.max(8,view.scale*.39) : Math.max(12,view.scale*.50);
+      const [x,y] = project([role.x,role.y+0.73*(role.parent ? AGENT_SIZE : 1),role.z]);
+      const gap = Math.hypot(left-x,top-y);
+      if (gap<Math.min(distance,reach)) {
+        closest = role;
+        distance = gap;
+      }
+    }
+    return closest?.parent?.thread.id ?? closest?.thread.id ?? null;
+  }
+  function threadAtPointer(event) {
+    return threadAtPoint(event.target,event.clientX,event.clientY);
+  }
+  function hoveredChat(target,x,y) {
+    if (target?.matches?.('#detail strong')) return state.selected;
+    return threadAtPoint(target,x,y);
+  }
+  function chatHoverIsCurrent() {
+    const {id,x,y} = chatHover;
+    return hoveredChat(document.elementFromPoint(x,y),x,y)===id;
+  }
+  function hideChatTitle() {
+    if (!chatHover) return;
+    clearTimeout(chatHover.timer);
+    chatHover = null;
+    chatTitleTooltip.hidden = true;
+  }
+  document.body.addEventListener('pointermove',event => {
+    if (!state.visible || event.pointerType==='touch') return;
+    const {clientX:x,clientY:y} = event;
+    const id = hoveredChat(event.target,x,y);
+    if (chatHover?.id===id) {
+      chatHover.x = x;
+      chatHover.y = y;
+      return;
+    }
+    hideChatTitle();
+    if (!id) return;
+    chatHover = {id,x,y,timer:setTimeout(() => {
+      const thread = currentThread(id);
+      if (!thread || !chatHoverIsCurrent()) return hideChatTitle();
+      const {x,y} = chatHover;
+      chatTitleTooltip.textContent = chatTitle(thread);
+      chatTitleTooltip.hidden = false;
+      const {offsetWidth:width,offsetHeight:height} = chatTitleTooltip;
+      chatTitleTooltip.style.left = Math.max(8,Math.min(x-width/2,innerWidth-width-8))+'px';
+      const top = y-height-12;
+      chatTitleTooltip.style.top = Math.max(8,Math.min(top>=8 ? top : y+16,innerHeight-height-8))+'px';
+    },250)};
+  });
+  document.body.addEventListener('pointerleave',hideChatTitle);
+  document.body.addEventListener('pointerdown',hideChatTitle);
+  window.addEventListener('blur',hideChatTitle);
+  function openSeatChat(id) {
+    const thread = currentThread(id);
+    openChat(thread?.status==='waiting' ? thread.attention_thread_id ?? id : id);
+  }
+  stage.addEventListener('click',event => {
+    const id = threadAtPointer(event);
+    if (event.detail===1) firstClickChat = id;
+    else if (event.detail!==2 || firstClickChat!==id) firstClickChat = null;
+    if (id) selectChat(id);
+  });
+  stage.addEventListener('dblclick',event => {
+    const id = threadAtPointer(event);
+    if (id && id===firstClickChat) {
+      event.preventDefault();
+      openSeatChat(id);
+    }
+    firstClickChat = null;
+  });
+  stage.addEventListener('keydown',event => {
+    const id = event.target.closest?.('button[data-thread-id]')?.dataset.threadId;
+    if (id && event.metaKey && event.key==='Enter' && !event.repeat) {
+      event.preventDefault();
+      openSeatChat(id);
+    }
+  });
+  for (const control of pageControls) {
+    const floor = control.dataset.floor;
+    for (const button of control.querySelectorAll('button')) {
+      button.addEventListener('click',() => {
+        const pages = layout.availablePages[floor];
+        const index = pages.indexOf(state.pages[floor])+Number(button.dataset.step);
+        if (index<0 || index>=pages.length) return;
+        state.pages[floor] = pages[index];
+        refresh();
+      });
+    }
+  }
+  canvas.addEventListener('webglcontextlost',event => {
+    event.preventDefault();
+    renderer = null;
+    canvas.hidden = true;
+    fallback.hidden = false;
+    avatars.clear();
+    paint();
+  });
+  canvas.addEventListener('webglcontextrestored',chooseRenderer);
+  dark.addEventListener('change',recolor);
+  reduced.addEventListener('change',paint);
+  new ResizeObserver(resize).observe(stage);
+
+  window.officeSetSnapshot = updateSnapshot;
+  window.officeSetVisible = setVisible;
+  window.officeSetLanguage = language => {
+    if (!i18n.setLanguage(language)) return;
+    configureUsageFormatters();
+    markersKey = dialogKey = groupPickerKey = sectionOptionsKey = '';
+    renderedUsageLive = renderedUsageHistory = lastToolbarState = '';
+    renderSectionSettings();
+    renderAliasDirectories();
+    updateSettingFeedback();
+    renderAppSettings();
+    renderCollaborationHelp();
+    renderSettingsHelp();
+    hideChatTitle();
+    usageTooltip.hidden = true;
+    window.officeSetUsage(usage);
+    refresh();
+    window.officeDropdowns?.refresh();
+  };
+  i18n.setLanguage(window.officeInitialLanguage);
+  configureUsageFormatters();
+  chooseRenderer();
+  refresh();
+  resize();
+  bridge({action:'ready'});
+})();
+  </script>
+</body>
+</html>

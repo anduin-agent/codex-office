@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'none'">
+  <title>详细用量</title>
+  <link rel="stylesheet" href="office-dropdown.css">
+  <link rel="stylesheet" href="usage-detail.css">
+  <script src="office-dropdown.js" defer></script>
+  <script src="usage-detail.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1 data-text="heading">详细用量</h1>
+    <form id="usage-filter" novalidate>
+      <div class="fields">
+        <label>
+          <span data-text="from">开始日期</span>
+          <input id="usage-from" type="date" required>
+        </label>
+        <label>
+          <span data-text="to">结束日期</span>
+          <input id="usage-to" type="date" required>
+        </label>
+        <label>
+          <span data-text="project">项目</span>
+          <select id="usage-project"><option value="" data-text="allProjects">所有项目</option></select>
+        </label>
+        <label>
+          <span data-text="model">模型</span>
+          <select id="usage-model"><option value="" data-text="allModels">所有模型</option></select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="usage-reset" type="button" data-text="reset">重置</button>
+        <button id="usage-apply" type="submit" class="primary" data-text="apply">应用筛选</button>
+      </div>
+    </form>
+
+    <p id="usage-status" role="status"></p>
+    <div class="results">
+      <section class="session-results" aria-labelledby="usage-results-title">
+        <div class="results-header">
+          <div>
+            <h2 id="usage-results-title" data-text="sessions">会话用量</h2>
+            <p id="usage-session-count"></p>
+          </div>
+          <strong id="usage-total-tokens">—</strong>
+        </div>
+        <ul id="usage-session-list" role="list"></ul>
+        <div id="usage-pagination" class="actions" hidden>
+          <button id="usage-previous" type="button" data-text="previous">上一页</button>
+          <span id="usage-page-range"></span>
+          <button id="usage-next" type="button" data-text="next">下一页</button>
+        </div>
+      </section>
+      <aside id="session-detail" aria-labelledby="session-detail-title" hidden>
+        <div class="detail-header">
+          <h2 id="session-detail-title" data-text="sessionDetail">会话详情</h2>
+          <button id="close-session-detail" type="button" data-text="close">收起</button>
+        </div>
+        <h3 id="session-title" tabindex="-1"></h3>
+        <dl>
+          <div><dt data-text="selectedTokens">筛选范围内的 Token</dt><dd id="session-tokens"></dd></div>
+          <div><dt data-text="dateRange">日期范围</dt><dd id="session-date-range"></dd></div>
+          <div><dt data-text="project">项目</dt><dd id="session-project"></dd></div>
+          <div><dt data-text="models">模型</dt><dd id="session-models"></dd></div>
+        </dl>
+        <button id="open-codex-session" class="primary" type="button" data-text="openChat">在 Codex 中打开</button>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

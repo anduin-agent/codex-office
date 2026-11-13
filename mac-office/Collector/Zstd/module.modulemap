@@ -1,0 +1,4 @@
+module OfficeZstd {
+    header "zstd.h"
+    export *
+}

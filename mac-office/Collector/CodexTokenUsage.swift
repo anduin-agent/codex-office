@@ -25,7 +25,8 @@ final class CodexTokenUsage {
         self.home = home.standardizedFileURL.resolvingSymlinksInPath()
     }
 
-    func scan(now: Date = Date(), budget: TimeInterval = 1.2, prices: OfficePrices = .empty) -> OfficeJSON {
+    func scan(now: Date = Date(), budget: TimeInterval = 1.2, prices: OfficePrices = .empty,
+              quotaAccount: String? = nil) -> OfficeJSON {
         latestPrices = prices
         let costs = UsageCostCalculator(prices)
         let start = ProcessInfo.processInfo.systemUptime
@@ -119,7 +120,8 @@ final class CodexTokenUsage {
         let historyValue: OfficeJSON? = hasCounts(historyStatus)
             ? historyPayload(history, breakdowns: breakdowns, estimates: estimates, totalEstimate: historyEstimate,
                              priceDate: prices.updatedAt, today: today, calendar: calendar) : nil
-        let quota = quotaWindows(at: now, pending: pending, failed: failed, inventoryErrors: inventory.hadErrors)
+        let quota = quotaWindows(at: now, account: quotaAccount, pending: pending, failed: failed,
+                                 inventoryErrors: inventory.hadErrors)
         var snapshot: OfficeJSON = [
             "live_status": liveStatus,
             "history_status": historyStatus,
@@ -130,6 +132,9 @@ final class CodexTokenUsage {
             "quota": quota.active.first as Any? ?? NSNull(),
             "quota_windows": Array(quota.active.reversed()),
             "quota_closed_windows": quota.closed,
+            "quota_plan": quota.plan as Any? ?? NSNull(),
+            "quota_account": quota.account as Any? ?? NSNull(),
+            "quota_sampled_at": quota.stamp.map(officeISODate) as Any? ?? NSNull(),
             "recent": hasCounts(liveStatus) ? recent.prefix(8).map { session -> OfficeJSON in
                 var row: OfficeJSON = ["id": session.id, "tokens": session.tokens]
                 session.estimate.write(to: &row)
@@ -401,21 +406,23 @@ final class CodexTokenUsage {
         }
     }
 
-    private func quotaWindows(at now: Date, pending: [UsageFileSignature], failed: [UsageFileSignature],
-                              inventoryErrors: Bool) -> (active: [OfficeJSON], closed: [OfficeJSON]) {
+    private func quotaWindows(at now: Date, account: String?, pending: [UsageFileSignature], failed: [UsageFileSignature],
+                              inventoryErrors: Bool) -> (active: [OfficeJSON], closed: [OfficeJSON], plan: String?,
+                                                        account: String?, stamp: Date?) {
         var newest: (report: QuotaReport, account: String?)?
         for (_, file) in files.sorted(by: { $0.key.path < $1.key.path }) {
-            guard let report = file.quota, report.stamp <= now else { continue }
+            guard account == nil || account == file.account,
+                  let report = file.quota, report.stamp <= now else { continue }
             if let newest, newest.report.stamp >= report.stamp { continue }
             newest = (report, file.account)
         }
         // A newer plan can make an old report misleading. Only look within the latest report.
-        guard let newest else { return ([], []) }
+        guard let newest else { return ([], [], nil, nil, nil) }
         var active: [OfficeJSON] = []
         var closed: [OfficeJSON] = []
         var durations = Set<Int>()
         for window in newest.report.windows where durations.insert(window.minutes).inserted {
-            if now >= window.resets {
+            if window.resets.map({ now >= $0 }) == true {
                 if window.tracksCycle, let account = newest.account,
                    let previous = previousCycle(minutes: window.minutes, through: now, account: account) {
                     let ended = closedCycle(previous, account: account, pending: pending, failed: failed,
@@ -427,15 +434,15 @@ final class CodexTokenUsage {
             var payload: OfficeJSON = [
                 "remaining_percent": window.remaining,
                 "window_minutes": window.minutes,
-                "resets_at": officeISODate(window.resets),
+                "resets_at": window.resets.map(officeISODate) as Any? ?? NSNull(),
             ]
-            let start = window.starts
-            guard window.tracksCycle, start <= newest.report.stamp else {
+            guard window.tracksCycle, let resets = window.resets, let start = window.starts,
+                  start <= newest.report.stamp else {
                 active.append(payload)
                 continue
             }
             payload["cycle_started_at"] = officeISODate(start)
-            let sample = QuotaSample(window: window, stamp: newest.report.stamp, plan: newest.report.plan)
+            let sample = QuotaSample(window: window, resets: resets, stamp: newest.report.stamp, plan: newest.report.plan)
             let current = cycleUsage(latest: sample, basis: sample, account: newest.account, through: now,
                                      closed: false, pending: pending, failed: failed, inventoryErrors: inventoryErrors)
             current.write(to: &payload)
@@ -459,16 +466,16 @@ final class CodexTokenUsage {
             }
             active.append(payload)
         }
-        return (active, closed)
+        return (active, closed, newest.report.plan, newest.account, newest.report.stamp)
     }
 
     private func closedCycle(_ samples: QuotaCycleSamples, account: String, pending: [UsageFileSignature],
                              failed: [UsageFileSignature], inventoryErrors: Bool) -> (payload: OfficeJSON, estimate: Int?) {
         let last = samples.latest
-        let closed = cycleUsage(latest: last, basis: samples.basis, account: account, through: last.window.resets,
+        let closed = cycleUsage(latest: last, basis: samples.basis, account: account, through: last.resets,
                                 closed: true, pending: pending, failed: failed, inventoryErrors: inventoryErrors)
         var payload: OfficeJSON = [
-            "resets_at": officeISODate(last.window.resets),
+            "resets_at": officeISODate(last.resets),
             "sampled_at": officeISODate(last.stamp),
             "used_percent": last.window.used,
         ]
@@ -486,8 +493,8 @@ final class CodexTokenUsage {
         for (_, file) in files.sorted(by: { $0.key.path < $1.key.path }) where file.account == account && file.usesOpenAI {
             for (key, samples) in file.quotaCycles where key.minutes == minutes && key.resets <= cutoff {
                 if let prior = previous {
-                    guard prior.latest.window.resets <= key.resets else { continue }
-                    if prior.latest.window.resets == key.resets {
+                    guard prior.latest.resets <= key.resets else { continue }
+                    if prior.latest.resets == key.resets {
                         previous?.record(samples.latest)
                         if let basis = samples.basis { previous?.record(basis) }
                         continue
@@ -501,7 +508,7 @@ final class CodexTokenUsage {
 
     private func cycleUsage(latest: QuotaSample, basis: QuotaSample?, account: String?, through end: Date, closed: Bool,
                             pending: [UsageFileSignature], failed: [UsageFileSignature], inventoryErrors: Bool) -> QuotaCycleUsage {
-        let start = latest.window.starts
+        let start = latest.resets.addingTimeInterval(-Double(latest.window.minutes) * 60)
         guard !pending.contains(where: { $0.modified >= start }) else { return QuotaCycleUsage(status: "loading") }
         let basis = basis.flatMap { $0.canEstimate && $0.planMatches(latest) ? $0 : nil }
         var observed = 0
@@ -836,12 +843,12 @@ private struct UsageEstimate {
 private struct QuotaReport {
     struct Window {
         let minutes: Int
-        let resets: Date
+        let resets: Date?
         let used: Double
         let remaining: Double
 
         var tracksCycle: Bool { minutes == 300 || minutes == 10_080 }
-        var starts: Date { resets.addingTimeInterval(-Double(minutes) * 60) }
+        var starts: Date? { resets?.addingTimeInterval(-Double(minutes) * 60) }
     }
 
     let stamp: Date
@@ -853,17 +860,19 @@ private struct QuotaReport {
         let windows: [Window] = ["primary", "secondary"].compactMap { key in
             guard let window = data[key] as? OfficeJSON,
                   let used = usageNumber(window["used_percent"])?.doubleValue, (0...100).contains(used),
-                  let minutes = usageInteger(window["window_minutes"]), minutes > 0,
-                  let reset = usageNumber(window["resets_at"])?.doubleValue,
-                  (-62_135_596_800..<253_402_300_800).contains(reset) else { return nil }
+                  let minutes = usageInteger(window["window_minutes"]), minutes > 0 else { return nil }
+            let reset = (usageNumber(window["resets_at"])?.doubleValue).flatMap { seconds in
+                seconds > 0 && seconds < 253_402_300_800 ? Date(timeIntervalSince1970: seconds) : nil
+            }
             let remaining = ((100 - used) * 100).rounded(.toNearestOrEven) / 100
-            return Window(minutes: minutes, resets: Date(timeIntervalSince1970: reset), used: used, remaining: remaining)
+            return Window(minutes: minutes, resets: reset, used: used, remaining: remaining)
         }
         guard !windows.isEmpty else { return nil }
         self.stamp = stamp
         plan = data["plan_type"] as? String
         self.windows = windows.sorted { left, right in
-            (left.minutes, left.resets, left.remaining) > (right.minutes, right.resets, right.remaining)
+            (left.minutes, left.resets ?? .distantPast, left.remaining) >
+                (right.minutes, right.resets ?? .distantPast, right.remaining)
         }
     }
 }
@@ -875,6 +884,7 @@ private struct QuotaCycleKey: Hashable {
 
 private struct QuotaSample {
     let window: QuotaReport.Window
+    let resets: Date
     let stamp: Date
     let plan: String?
 
@@ -971,9 +981,10 @@ private struct UsageFile {
             if quota.map({ stamp >= $0.stamp }) ?? true { quota = report }
             if account != nil {
                 // Keep two samples per observed reset rather than every token event.
-                for window in report.windows where window.tracksCycle && window.starts <= stamp && stamp < window.resets {
-                    let key = QuotaCycleKey(minutes: window.minutes, resets: window.resets)
-                    let sample = QuotaSample(window: window, stamp: stamp, plan: report.plan)
+                for window in report.windows where window.tracksCycle {
+                    guard let resets = window.resets, let starts = window.starts, starts <= stamp, stamp < resets else { continue }
+                    let key = QuotaCycleKey(minutes: window.minutes, resets: resets)
+                    let sample = QuotaSample(window: window, resets: resets, stamp: stamp, plan: report.plan)
                     if quotaCycles[key] == nil { quotaCycles[key] = QuotaCycleSamples(sample) }
                     else { quotaCycles[key]?.record(sample) }
                 }

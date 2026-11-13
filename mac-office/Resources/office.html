@@ -280,18 +280,32 @@
     .usage-money { color: var(--muted); font-size: 10px; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .usage-amount { display: inline-flex; flex: none; align-items: baseline; gap: 5px; }
     #usage-price-note { margin: 0 0 8px; }
-    .usage-plan { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 9px 0 0; }
-    .usage-plan-percent { color: var(--accent); }
+    .usage-plan {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 9px; margin: 10px 0 0;
+      padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--window);
+    }
+    .usage-plan-label { font-weight: 650; }
+    .usage-plan-percent { color: var(--accent); font-size: 15px; }
     .usage-plan-countdown { color: var(--accent); font-weight: 650; }
     .usage-plan-cycle {
-      flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: baseline;
-      gap: 3px 14px; margin: 1px 0 0; color: var(--muted); font-size: 11px;
+      flex: 0 0 100%; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline;
+      gap: 4px 14px; margin: 0; padding: 5px 8px; border-radius: 6px;
+      background: color-mix(in srgb, var(--active) 42%, var(--window));
+      color: var(--muted); font-size: 11px; line-height: 1.45;
     }
     .usage-plan-cycle strong { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
-    .usage-plan-previous { padding: 4px 0 0; border-top: 1px solid var(--line); }
-    .usage-cycle-comparison { color: var(--text); }
+    .usage-plan-previous { background: var(--panel); border: 1px solid var(--line); }
+    .usage-plan-previous-date { flex: 0 0 100%; color: var(--text); font-weight: 650; }
+    .usage-cycle-comparison[data-status] {
+      padding: 1px 6px; border-radius: 5px; color: var(--text); font-weight: 600;
+      background: color-mix(in srgb, currentColor 9%, transparent);
+    }
     .usage-cycle-comparison[data-status="lower"] { color: var(--amber); }
     .usage-cycle-comparison[data-status="higher"] { color: var(--mint); }
+    .usage-quota-notes { margin-top: 8px; padding-inline-start: 9px; border-inline-start: 2px solid var(--line); }
+    .usage-quota-notes .dialog-note { margin: 0; line-height: 1.45; }
+    .usage-quota-notes .dialog-note + .dialog-note { margin-top: 3px; }
+    #usage-quota-plan { font-weight: 600; }
     .usage-plan progress {
       -webkit-appearance: none; appearance: none; flex: 0 0 100%;
       width: 100%; height: 6px; margin-top: 2px; border: 0; border-radius: 6px;
@@ -516,6 +530,10 @@
             <span id="help-menu-bar" hidden>选择菜单栏旁边显示的数据。机器人的步频始终跟随最近 1 分钟的 Token 速度。</span>
           </div>
           <div class="settings-choice">
+            <label class="login-item-choice"><input type="checkbox" name="live_quota" aria-describedby="help-live-quota"><span>实时账户额度</span></label>
+            <small id="help-live-quota">通过本机 Codex 登录会话向 OpenAI 查询额度。关闭时使用本机日志。</small>
+          </div>
+          <div class="settings-choice">
             <div class="setting-heading">
               <label for="visible-section-mode">办公室显示分区</label>
               <button class="setting-help" type="button" aria-label="办公室显示分区说明" aria-describedby="help-sections">?</button>
@@ -597,8 +615,11 @@
       <p class="usage-plan-cycle" hidden></p>
       <p class="usage-plan-cycle usage-plan-previous" hidden></p>
     </div>
-    <p id="usage-cycle-note" class="dialog-note" hidden>容量按本机用量和同一时刻的已用比例外推，仅供参考。模型、任务和其他设备的用量都可能影响结果。</p>
-    <p id="usage-comparison-note" class="dialog-note" hidden></p>
+    <div id="usage-quota-notes" class="usage-quota-notes" hidden>
+      <p id="usage-quota-plan" class="dialog-note" hidden></p>
+      <p id="usage-cycle-note" class="dialog-note" hidden>容量按本机用量和同一时刻的已用比例外推，仅供参考。模型、任务和其他设备的用量都可能影响结果。</p>
+      <p id="usage-comparison-note" class="dialog-note" hidden></p>
+    </div>
     <section class="usage-history" aria-labelledby="usage-history-title">
       <div class="usage-heading">
         <div class="usage-history-heading">
@@ -2444,6 +2465,7 @@
   let browsingAlias = null;
   const retrySettings = byId('retry-settings');
   const settingsMetric = settingsForm.elements.namedItem('menu_bar_metric');
+  const liveQuotaSetting = settingsForm.elements.namedItem('live_quota');
   const settingsLanguage = settingsForm.elements.namedItem('language');
   const settingsSection = settingsForm.elements.namedItem('coordination_section');
   const settingsThreads = settingsForm.elements.namedItem('thread_projects');
@@ -2686,6 +2708,7 @@
       settingsBaseline = {
         language: languages.has(office.language) ? office.language : 'zh-CN',
         menu_bar_metric: menuBarMetrics.has(office.menu_bar_metric) ? office.menu_bar_metric : 'token_speed',
+        live_quota: office.live_quota === true,
         coordination_section: office.coordination_section ?? null,
         projects: office.projects ?? {},
         thread_projects: office.thread_projects ?? {},
@@ -2694,6 +2717,7 @@
       if (firstLoad) {
         settingsLanguage.value = settingsBaseline.language;
         settingsMetric.value = settingsBaseline.menu_bar_metric;
+        liveQuotaSetting.checked = settingsBaseline.live_quota;
         settingsSection.value = settingsBaseline.coordination_section ?? '';
         settingsThreads.value = JSON.stringify(settingsBaseline.thread_projects, null, 2);
         aliases.replaceChildren(...Object.entries(settingsBaseline.projects).map(([path, name]) => aliasRow(path, name)));
@@ -2824,6 +2848,7 @@
   });
   sectionMode.addEventListener('change',applyVisibleSectionSetting);
   settingsMetric.addEventListener('change', () => queueSetting('menu_bar_metric',settingsMetric.value));
+  liveQuotaSetting.addEventListener('change', () => queueSetting('live_quota',liveQuotaSetting.checked));
   settingsLanguage.addEventListener('change', () => queueSetting('language',settingsLanguage.value));
   byId('add-alias').addEventListener('click', () => {
     const row = aliasRow();
@@ -3292,25 +3317,49 @@
     clearTimeout(usageResetTimer);
     const now = Date.now();
     const windows = (usage?.quota_windows ?? [usage?.quota]).map(quota => ({
-      percent:quota?.remaining_percent, minutes:quota?.window_minutes, reset:Date.parse(quota?.resets_at),
+      percent:quota?.remaining_percent, minutes:quota?.window_minutes,
+      reset:quota?.resets_at==null ? null : Date.parse(quota.resets_at),
       cycleStart:Date.parse(quota?.cycle_started_at), cycleStatus:quota?.cycle_status,
       cycleTokens:usageCount(quota?.cycle_tokens), cycleEstimate:usageCount(quota?.cycle_estimated_tokens),
       previous:quota?.previous_cycle, comparison:quota?.cycle_comparison
     })).filter(({percent,minutes,reset}) => Number.isFinite(percent) && percent>=0 && percent<=100 &&
-      Number.isInteger(minutes) && minutes>0 && reset>now);
+      Number.isInteger(minutes) && minutes>0 && (reset===null || reset>now));
     for (const closed of usage?.quota_closed_windows ?? []) {
       if ([300,10080].includes(closed.window_minutes) && closed.previous_cycle &&
           !windows.some(window => window.minutes===closed.window_minutes)) {
         windows.push({minutes:closed.window_minutes, previous:closed.previous_cycle, closed:true});
       }
     }
+    const plan = usage?.quota_plan;
+    const source = usage?.quota_source;
+    if (plan==='plus' && source!=='unavailable' && !windows.some(window => window.minutes===300)) {
+      windows.push({minutes:300, awaiting:true});
+    }
+    const planLabel = new Map([['plus','Plus'],['prolite','Pro'],['pro','Pro'],['promax','Pro']]).get(plan);
+    const planNote = byId('usage-quota-plan');
+    const sampled = Date.parse(usage?.quota_sampled_at);
+    const time = Number.isFinite(sampled) ? usageResetTime.format(sampled) : '';
+    const messages = {
+      live: time ? t('实时账户额度 · {0}',time) : t('实时账户额度'),
+      fallback: time ? t('实时查询失败 · 同一账户的本机记录 · {0}',time) : t('实时查询失败 · 同一账户的本机记录'),
+      unavailable: t('实时额度不可用，暂无可确认属于当前账户的本机记录。'),
+      loading: t('正在查询实时账户额度…'),
+      local_loading: t('正在读取本机额度记录…'),
+    };
+    const sourceNote = messages[source] || (time ? t('本机额度记录 · {0}',time) : '');
+    const accountNote = planLabel && source!=='unavailable'
+      ? t(source==='live' ? '当前额度来自 {0} 套餐。' : '最近本机额度记录来自 {0} 套餐。',planLabel) : '';
+    planNote.hidden = !(sourceNote || accountNote);
+    usageText(planNote,[sourceNote,accountNote].filter(Boolean).join(' '));
     windows.sort((a,b) => a.minutes-b.minutes);
     let nextUpdate = Infinity;
-    byId('usage-cycle-note').hidden = !windows.some(window =>
-      window.cycleEstimate!==null || usageCount(window.previous?.cycle_estimated_tokens)!==null);
+    const cycleNote = byId('usage-cycle-note');
+    cycleNote.hidden = !windows.some(window =>
+      usageCount(window.cycleEstimate)!==null || usageCount(window.previous?.cycle_estimated_tokens)!==null);
     const tolerance = windows.find(window => Number.isFinite(window.comparison?.tolerance_percent))?.comparison.tolerance_percent;
     const comparisonNote = byId('usage-comparison-note');
     comparisonNote.hidden = tolerance===undefined;
+    byId('usage-quota-notes').hidden = planNote.hidden && cycleNote.hidden && comparisonNote.hidden;
     if (!comparisonNote.hidden) usageText(comparisonNote,t('两次估算各留 ±{0} 的经验误差。区间重叠算接近，分开才提示可能增减。',
       usagePercent.format(tolerance/100)));
     for (const [index,row] of quotaRows.entries()) {
@@ -3335,18 +3384,22 @@
     const previous = row.querySelector('.usage-plan-previous');
     previous.hidden = cycle.hidden && !window?.closed;
     if (!previous.hidden) renderPreviousQuotaCycle(previous,window);
-    countdown.hidden = progress.hidden = !window || !!window.closed;
+    progress.hidden = !window || Boolean(window.closed || window.awaiting);
+    countdown.hidden = progress.hidden || window.reset===null;
     if (!window) {
       usageText(label,t('套餐余量'));
       usageText(amount,'—');
-      usageText(note,t('本机暂无有效记录'));
+      const source = usage?.quota_source;
+      usageText(note,source==='live' ? t('账户暂无有效额度窗口。') :
+        ['loading','local_loading','unavailable'].includes(source) ? '' : t('本机暂无有效记录'));
       return Infinity;
     }
     const {percent,minutes,reset} = window;
     usageText(label,t(minutes===300 ? '5 小时额度剩余' : minutes===10080 ? '周额度剩余' : '套餐余量'));
-    if (window.closed) {
+    if (window.closed || window.awaiting) {
       usageText(amount,'—');
-      usageText(note,t('等待新周期额度记录'));
+      const noShortWindow = usage?.quota_source==='live' ? '账户未返回 5 小时额度。' : '本机尚未收到 5 小时额度记录。';
+      usageText(note,t(window.awaiting ? noShortWindow : '等待新周期额度记录'));
       return Infinity;
     }
     const remaining = reset-now;
@@ -3354,7 +3407,12 @@
     usageText(amount,usagePercent.format(percent/100));
     const period = minutes%1440===0 ? t('{0} 天',minutes/1440)
       : minutes%60===0 ? t('{0} 小时',minutes/60) : t('{0} 分钟',minutes);
-    usageText(note,t('本机记录 · {0}窗口 · {1} 重置',period,usageResetTime.format(reset)));
+    if (!Number.isFinite(reset)) {
+      usageText(note,t(usage?.quota_source==='live' ? '重置时间未知' : '本机记录 · 重置时间未知'));
+      return Infinity;
+    }
+    const resetLabel = usage?.quota_source==='live' ? '{0}窗口 · {1} 重置' : '本机记录 · {0}窗口 · {1} 重置';
+    usageText(note,t(resetLabel,period,usageResetTime.format(reset)));
     const minutesLeft = Math.ceil(remaining/60_000);
     const days = Math.floor(minutesLeft/1440);
     const hours = Math.floor(minutesLeft/60)%24;
@@ -3399,6 +3457,7 @@
     const reset = Date.parse(previous.resets_at);
     if (Number.isFinite(reset)) {
       const label = document.createElement('span');
+      label.className = 'usage-plan-previous-date';
       label.textContent = t('上次有记录的周期 · {0} 结束',usageResetTime.format(reset));
       row.append(label);
     }

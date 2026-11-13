@@ -10,6 +10,8 @@
     <string>CodexOffice</string>
     <key>CFBundleIdentifier</key>
     <string>local.codex-office</string>
+    <key>CFBundleIconFile</key>
+    <string>Office.icns</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

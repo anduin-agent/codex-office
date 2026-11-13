@@ -81,6 +81,7 @@ enum OfficeUITest {
                 try checkToolbarLayout()
                 try checkReleaseVersions()
                 try await checkToolbar(panel, view)
+                try await checkPlusQuota(office, panel, view, home: home)
                 try await checkAgentTeam(panel, view)
                 try await checkProjectAliases(office, panel, view, workspace: workspace, settings: settings)
                 try await checkSettings(office, panel, view, settings)
@@ -620,6 +621,141 @@ enum OfficeUITest {
             document.querySelector('.usage-plan-previous').textContent.includes('≈ 5M tokens') &&
             document.querySelector('#usage-comparison-note').hidden
             """)
+    }
+
+    @MainActor
+    private static func checkPlusQuota(_ office: OfficeApplication, _ panel: NSPanel, _ view: WKWebView,
+                                       home: URL) async throws {
+        let path = home.appendingPathComponent("sessions/plus-quota.jsonl")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let now = Date()
+        let formatter = ISO8601DateFormatter()
+        let weekly: [String: Int] = ["window_minutes": 10_080, "used_percent": 55,
+                                     "resets_at": Int(now.timeIntervalSince1970) + 3_600]
+        func writeQuota(_ short: OfficeJSON?, at time: Date) throws {
+            let limits: OfficeJSON = ["limit_id": "codex", "plan_type": "plus",
+                                      "primary": short as Any? ?? weekly,
+                                      "secondary": short == nil ? NSNull() as Any : weekly]
+            let event: OfficeJSON = ["type": "event_msg", "timestamp": formatter.string(from: time),
+                                    "payload": ["type": "token_count", "info": NSNull(), "rate_limits": limits]]
+            let data = try JSONSerialization.data(withJSONObject: event)
+            let metadata = """
+                {"timestamp":"\(formatter.string(from: now.addingTimeInterval(-600)))","type":"session_meta","payload":{"id":"00000000-0000-0000-0000-000000000006","model_provider":"openai","creator_account_id":"plus-fixture"}}
+
+                """
+            try (Data(metadata.utf8) + data + Data([10])).write(to: path, options: .atomic)
+        }
+        _ = try await view.evaluateJavaScript("window.officeOpenUsage()")
+        try writeQuota(["window_minutes": 300, "used_percent": 20,
+                        "resets_at": Int(now.timeIntervalSince1970) + 1_800], at: now.addingTimeInterval(-90))
+        await office.refreshOffscreenUsage()
+        try await expect("A Plus quota rollout reaches both progress bars and countdowns through the native bridge", panel, view, """
+            document.querySelector('#usage-plan-label').textContent==='5 小时额度剩余' &&
+            !document.querySelector('#usage-plan-progress').hidden && document.querySelector('#usage-plan-progress').value===80 &&
+            !document.querySelector('#usage-plan-countdown').hidden &&
+            document.querySelector('#usage-plan-second-label').textContent==='周额度剩余' &&
+            document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===45 &&
+            !document.querySelector('#usage-plan-second-label').parentElement.querySelector('.usage-plan-countdown').hidden
+            """)
+        try writeQuota(["window_minutes": 300, "used_percent": 25, "resets_at": NSNull()], at: now.addingTimeInterval(-60))
+        await office.refreshOffscreenUsage()
+        try await expect("Plus displays the known five-hour percentage before a reset time is available", panel, view, """
+            document.querySelector('#usage-plan-label').textContent==='5 小时额度剩余' &&
+            !document.querySelector('#usage-plan-progress').hidden && document.querySelector('#usage-plan-progress').value===75 &&
+            document.querySelector('#usage-plan-countdown').hidden &&
+            document.querySelector('#usage-plan-note').textContent==='本机记录 · 重置时间未知' &&
+            document.querySelector('#usage-plan-second-label').textContent==='周额度剩余' &&
+            document.querySelector('#usage-quota-plan').textContent.includes('最近本机额度记录来自 Plus 套餐。')
+            """)
+        try writeQuota(nil, at: now.addingTimeInterval(-30))
+        await office.refreshOffscreenUsage()
+        try await expect("Plus explains a missing five-hour reading without showing a fabricated percentage", panel, view, """
+            document.querySelector('#usage-plan-label').textContent==='5 小时额度剩余' &&
+            document.querySelector('#usage-plan-progress').hidden &&
+            document.querySelector('#usage-plan-note').textContent==='本机尚未收到 5 小时额度记录。' &&
+            document.querySelector('#usage-plan-second-label').textContent==='周额度剩余' &&
+            document.querySelector('#usage-cycle-note').hidden
+            """)
+        try await checkLiveQuota(office, panel, view, home: home)
+        _ = try await view.evaluateJavaScript("document.querySelector('#show-office').click()")
+    }
+
+    @MainActor
+    private static func checkLiveQuota(_ office: OfficeApplication, _ panel: NSPanel, _ view: WKWebView,
+                                       home: URL) async throws {
+        let executable = home.appendingPathComponent("fixture-codex")
+        let outcome = home.appendingPathComponent("fixture-quota-outcome")
+        let invoked = home.appendingPathComponent("fixture-quota-invoked")
+        let script = #"""
+        #!/usr/bin/python3
+        import json, os, pathlib, sys, time
+        home = pathlib.Path(os.environ['CODEX_HOME'])
+        home.joinpath('fixture-quota-invoked').touch()
+        assert sys.argv[1:] == ['app-server', '--listen', 'stdio://']
+        mode = home.joinpath('fixture-quota-outcome').read_text()
+        now = int(time.time())
+        account = 'different-fixture' if mode == 'different' else 'plus-fixture'
+        for line in sys.stdin:
+            request = json.loads(line)
+            method = request['method']
+            if method == 'initialized':
+                continue
+            if method == 'initialize':
+                result = {'userAgent': 'fixture'}
+            elif method == 'account/read':
+                assert request['params']['refreshToken'] is False
+                result = {'account': {'type': 'chatgpt', 'planType': 'plus'},
+                          'workspaceRouting': {'chatgptAccountId': account}}
+            elif method == 'account/rateLimits/read':
+                if mode != 'live':
+                    print(json.dumps({'id':request['id'], 'error':{'code':-32603}}), flush=True)
+                    continue
+                limits = {'planType': 'plus', 'primary': {'usedPercent': 70, 'windowDurationMins': 10080,
+                          'resetsAt': now + 3600}, 'secondary': {'usedPercent': 16, 'windowDurationMins': 300}}
+                result = {'accountId': account, 'rateLimitsByLimitId': {'codex': limits}}
+            else:
+                raise AssertionError(method)
+            print(json.dumps({'id': request['id'], 'result': result}), flush=True)
+        """#
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        office.offscreenQuotaExecutable = executable
+        await office.refreshOffscreenUsage()
+        guard !FileManager.default.fileExists(atPath: invoked.path) else {
+            throw Failure("Live quota must never start automatically in the default mode")
+        }
+        try button(.settings, in: panel).performClick(nil)
+        try await expect("Live quota starts disabled", panel, view, """
+            document.querySelector('#office-settings').open && !document.querySelector('[name=live_quota]').matches(':disabled') &&
+            !document.querySelector('[name=live_quota]').checked
+            """)
+        for (mode, result) in [
+            ("live", """
+                document.querySelector('#usage-quota-plan').textContent.startsWith('实时账户额度') &&
+                document.querySelector('#usage-plan-progress').value===84 &&
+                document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===30
+                """),
+            ("same", """
+                document.querySelector('#usage-quota-plan').textContent.startsWith('实时查询失败 · 同一账户的本机记录') &&
+                document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===45
+                """),
+            ("different", """
+                document.querySelector('#usage-quota-plan').textContent.startsWith('实时额度不可用') &&
+                [...document.querySelectorAll('.usage-plan progress')].every(bar => bar.closest('[hidden]'))
+                """),
+        ] {
+            try mode.write(to: outcome, atomically: true, encoding: .utf8)
+            _ = try await view.evaluateJavaScript("document.querySelector('[name=live_quota]').click()")
+            try await expect("Live quota handles the \(mode) app-server result", panel, view, result)
+            _ = try await view.evaluateJavaScript("document.querySelector('[name=live_quota]').click()")
+            try await expect("Disabling live quota restores the default log source", panel, view, """
+                document.querySelector('#usage-quota-plan').textContent.startsWith('本机额度记录') &&
+                document.querySelector('#settings-feedback').textContent==='已保存' &&
+                document.querySelector('#usage-plan-second-label').parentElement.querySelector('progress').value===45
+                """)
+        }
+        _ = try await view.evaluateJavaScript("document.querySelector('#close-settings').click()")
+        office.offscreenQuotaExecutable = nil
     }
 
     @MainActor

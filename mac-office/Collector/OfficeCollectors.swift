@@ -65,10 +65,10 @@ actor OfficeUsageCollector {
         self.settings = settings
     }
 
-    func snapshot(refreshPrices: Bool) async throws -> Data {
+    func snapshot(refreshPrices: Bool, quotaAccount: String? = nil) async throws -> Data {
         let rates = await prices.prices(refresh: refreshPrices)
         try Task.checkCancellation()
-        return try JSONSerialization.data(withJSONObject: usage.scan(prices: rates))
+        return try JSONSerialization.data(withJSONObject: usage.scan(prices: rates, quotaAccount: quotaAccount))
     }
 
     func dayDetails(_ day: String, language: OfficeLanguage) throws -> Data {

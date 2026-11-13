@@ -20,8 +20,12 @@ struct TokenUsageSnapshot {
               let liveStatus = payload["live_status"] as? String,
               ["ok", "partial", "loading", "unavailable"].contains(liveStatus)
         else { return nil }
+        self.init(payload: payload)
+    }
+
+    init(payload: [String: Any]) {
         self.payload = payload
-        self.liveStatus = liveStatus
+        self.liveStatus = payload["live_status"] as? String ?? "unavailable"
         self.tokensPerMinute = payload["tokens_per_minute"] as? Int
         self.todayStatus = payload["today_status"] as? String ?? "unavailable"
         self.todayTokens = payload["today_tokens"] as? Int
@@ -72,6 +76,9 @@ struct TokenUsageSnapshot {
             case 300: language.text("5 小时额度剩余", "5-hour quota remaining")
             case 10_080: language.text("套餐周余量", "Weekly quota remaining")
             default: language.text("套餐余量", "Plan quota remaining")
+            }
+            if payload["quota_source"] as? String == "live" {
+                return language.text("\(label)：\(quotaText)（实时账户额度）", "\(label) · \(quotaText) (live account quota)")
             }
             return language.text("\(label)：\(quotaText)（本机最近记录）", "\(label) · \(quotaText) (last local record)")
         }

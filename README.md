@@ -35,6 +35,7 @@ Use these steps if macOS says it can't verify the developer or check the app for
 - **See which chats used the most.** Rankings combine each main chat with its subagents and linked automatic reviews. Expand a group to see its sessions. Reviews without a verified parent are grouped under **Unassigned automatic reviews**.
 - **Drill down.** Open **Usage details** to filter by date, project, or model and inspect a session's token and model breakdown.
 - **Compare quota cycles.** When the local logs contain weekly or 5-hour quota records, the panel shows the remaining percentage, reset time, and countdown. It compares estimated token capacity for the current and last recorded cycle when both have enough data.
+- **Check live account quota.** Enable **Live account quota** in Office Settings to query OpenAI through your installed Codex while the Usage tab is visible or the menu bar shows quota. The Usage tab shows the source and reading time. If the query fails, Office shows local quota only when it can match it to the current account.
 
 API cost figures are USD equivalents based on [OpenAI's standard API prices](https://developers.openai.com/api/docs/pricing). They are separate from subscription charges. The app includes a rate table and checks for price updates at most once per local day while the panel is open. It marks estimates that cover only part of the recorded usage.
 

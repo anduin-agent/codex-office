@@ -1,3 +1,4 @@
+import CoreFoundation
 import Darwin
 import Foundation
 
@@ -38,7 +39,7 @@ struct OfficeSettings: Sendable {
 
     private static let maxBytes = 256 * 1024
     static let editableKeys: Set<String> = [
-        "projects", "thread_projects", "coordination_section", "menu_bar_metric", "visible_sections", "language"
+        "projects", "thread_projects", "coordination_section", "menu_bar_metric", "visible_sections", "language", "live_quota"
     ]
 
     static var defaultURL: URL {
@@ -57,7 +58,7 @@ struct OfficeSettings: Sendable {
         [
             "projects": OfficeJSON(), "thread_projects": OfficeJSON(),
             "coordination_section": NSNull(), "menu_bar_metric": "token_speed", "visible_sections": NSNull(),
-            "language": OfficeLanguage.simplifiedChinese.rawValue
+            "language": OfficeLanguage.simplifiedChinese.rawValue, "live_quota": false
         ]
     }
 
@@ -143,6 +144,8 @@ struct OfficeSettings: Sendable {
         else { throw InvalidSettings("菜单栏指标无效。", "The menu bar metric is invalid.") }
         guard let language = document["language"] as? String, OfficeLanguage(rawValue: language) != nil
         else { throw InvalidSettings("界面语言无效。", "The interface language is invalid.") }
+        guard let liveQuota = document["live_quota"] as? NSNumber, CFGetTypeID(liveQuota) == CFBooleanGetTypeID()
+        else { throw InvalidSettings("实时额度设置无效。", "Invalid live quota setting.") }
         if !(document["visible_sections"] is NSNull) {
             guard let sections = document["visible_sections"] as? [Any], sections.count <= 512 else {
                 throw InvalidSettings("显示分区列表无效。", "The list of visible sections is invalid.")

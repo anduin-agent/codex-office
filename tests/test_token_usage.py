@@ -530,6 +530,31 @@ class CodexTokenUsageTests(unittest.TestCase):
         self.assertEqual(short_only["quota"]["window_minutes"], 300)
         self.assertEqual(short_only["quota_windows"], [short_only["quota"]])
 
+    def test_plus_quota_preserves_remaining_percent_without_a_reset_time(self):
+        path = self.sessions / "plus.jsonl"
+        weekly = {"used_percent": 55, "window_minutes": 10_080,
+                  "resets_at": int((self.now + timedelta(days=2)).timestamp())}
+        self.write(path, self.row(-600, "session_meta", id=self.owner, creator_account_id="plus-fixture"),
+                   self.row(-30, "event_msg", type="token_count", info=None, rate_limits={
+                       "limit_id": "codex", "plan_type": "plus", "primary": {
+                           "used_percent": 25, "window_minutes": 300, "resets_at": None,
+                       }, "secondary": weekly,
+                   }))
+        result = self.scan(self.now)
+        self.assertEqual(result["quota_plan"], "plus")
+        short, long = result["quota_windows"]
+        self.assertEqual(short, {"window_minutes": 300, "remaining_percent": 75, "resets_at": None})
+        self.assertEqual(long, result["quota"])
+        self.assertEqual(long["window_minutes"], 10_080)
+
+        self.write(path, self.row(-10, "event_msg", type="token_count", info=None, rate_limits={
+            "limit_id": "codex", "plan_type": "plus", "primary": weekly,
+        }))
+        weekly_only = self.scan(self.now)
+        self.assertEqual(weekly_only["quota_plan"], "plus")
+        self.assertEqual(weekly_only["quota_windows"], [weekly_only["quota"]])
+        self.assertEqual(weekly_only["quota"]["window_minutes"], 10_080)
+
     def test_compressed_archives_and_damaged_frame(self):
         # The frame contains one session_meta and one 120-token event.
         frame = base64.b64decode(

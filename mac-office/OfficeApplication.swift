@@ -118,6 +118,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     WKNavigationDelegate, WKScriptMessageHandler
 {
     private let sceneURL: URL
+    private let codexHome: URL
     private let activityCollector: OfficeActivityCollector
     private let usageCollector: OfficeUsageCollector
     private let defaults = UserDefaults.standard
@@ -161,6 +162,14 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var pendingPanelAction: OfficeToolbarAction?
     private var snapshot: ActivitySnapshot?
     private var usage: TokenUsageSnapshot?
+    private var usageQuotaAccount: String?
+    private var liveQuotaEnabled: Bool
+    private var liveQuota: OfficeLiveQuota?
+    private var liveQuotaTask: Task<Void, Never>?
+    private var nextLiveQuotaRead: TimeInterval = 0
+    #if OFFICE_UI_TEST
+    var offscreenQuotaExecutable: URL?
+    #endif
     private var usageLoaded = false
     private var showingUsage = false
     private var usageDayTask: Task<Void, Never>?
@@ -174,6 +183,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         self.sceneURL = sceneURL.standardizedFileURL
         let home = OfficeCollectorPaths.codexHome(codexHome)
         let settings = OfficeCollectorPaths.settings(configFile)
+        self.codexHome = home
+        liveQuotaEnabled = (try? settings.load())?["live_quota"] as? Bool ?? false
         let preference = settings.preferredLanguage()
         languagePreference = preference
         language = preference.resolved
@@ -231,6 +242,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     func applicationWillTerminate(_ notification: Notification) {
         pollTask?.cancel()
         usagePollTask?.cancel()
+        liveQuotaTask?.cancel()
         usageDayTask?.cancel()
         usageDetailWindow?.stop()
         settingsTask?.cancel()
@@ -360,14 +372,16 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                 : language.text("活动数据不可用", "Activity unavailable")
         }
         activityItem.title = status
-        let metricStatus = usage?.description(for: menuBarMetric, language: language) ?? (usageLoaded
+        let displayedUsage = menuBarMetric == .planRemaining
+            ? usage.map { TokenUsageSnapshot(payload: usagePayload($0.payload)) } : usage
+        let metricStatus = displayedUsage?.description(for: menuBarMetric, language: language) ?? (usageLoaded
             ? language.text("用量不可用", "Usage unavailable")
             : language.text("正在读取 token 用量", "Loading token usage"))
         metricItem.title = metricStatus
         let countLabel = waiting > 0
             ? language.text("等你确认 \(waiting)", "\(waiting) Waiting")
             : (count.map(String.init) ?? "—") + language.text(" 进行中", " Active")
-        let metricLabel = usage?.title(for: menuBarMetric, language: language) ?? "—"
+        let metricLabel = displayedUsage?.title(for: menuBarMetric, language: language) ?? "—"
         let title = countLabel + " · " + metricLabel
         let button = statusItem?.button
         if statusTitle != title {
@@ -577,10 +591,13 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     private func refreshUsage() async {
-        let result = (try? await usageCollector.snapshot(refreshPrices: windowVisible))
+        requestLiveQuotaIfNeeded()
+        let account = liveQuotaEnabled ? liveQuota?.account : nil
+        let result = (try? await usageCollector.snapshot(refreshPrices: windowVisible, quotaAccount: account))
             .flatMap(TokenUsageSnapshot.init(data:))
         guard !Task.isCancelled else { return }
         usage = result
+        usageQuotaAccount = account
         usageLoaded = true
         tokenMeter?.update(rate: result?.tokensPerMinute)
         refreshMenu()
@@ -588,8 +605,11 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     private func pushUsage() {
-        guard sceneReady, windowVisible, usageLoaded else { return }
-        var payload = usage?.payload
+        guard sceneReady, usageLoaded else { return }
+        #if !OFFICE_UI_TEST
+        guard windowVisible else { return }
+        #endif
+        var payload = usage.map { usagePayload($0.payload) }
         if var recent = payload?["recent"] as? [[String: Any]], !recent.isEmpty,
            let threads = snapshot?.payload["threads"] as? [[String: Any]] {
             let ids = Set(recent.compactMap { $0["id"] as? String })
@@ -609,6 +629,62 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             "window.officeSetUsage(usage);", arguments: ["usage": payload as Any? ?? NSNull()],
             in: nil, in: .page, completionHandler: nil
         )
+    }
+
+    private func usagePayload(_ local: OfficeJSON) -> OfficeJSON {
+        var payload = local
+        if liveQuotaEnabled, let liveQuota {
+            payload = liveQuota.displayPayload(local)
+        } else if liveQuotaEnabled || usageQuotaAccount != nil {
+            payload["quota"] = NSNull()
+            payload["quota_windows"] = [] as [OfficeJSON]
+            payload["quota_closed_windows"] = [] as [OfficeJSON]
+            payload["quota_plan"] = NSNull()
+            payload["quota_sampled_at"] = NSNull()
+            payload["quota_source"] = liveQuotaEnabled ? "loading" : "local_loading"
+        }
+        payload.removeValue(forKey: "quota_account")
+        return payload
+    }
+
+    private func requestLiveQuotaIfNeeded() {
+        #if OFFICE_UI_TEST
+        let executable = offscreenQuotaExecutable
+        let viewingUsage = showingUsage
+        #else
+        let viewingUsage = showingUsage && windowVisible
+        #endif
+        let uptime = ProcessInfo.processInfo.systemUptime
+        guard liveQuotaEnabled, viewingUsage || menuBarMetric == .planRemaining,
+              liveQuotaTask == nil, uptime >= nextLiveQuotaRead else { return }
+        #if !OFFICE_UI_TEST
+        let executable = Self.codexExecutable()
+        #endif
+        liveQuotaTask = Task { [weak self, codexHome] in
+            let result = await OfficeLiveQuota.read(executable: executable, home: codexHome)
+            guard let self, !Task.isCancelled else { return }
+            self.liveQuotaTask = nil
+            self.liveQuota = result
+            let nextReset = result.windows?.compactMap(\.resets).filter { $0 > Date() }.min()
+            let interval = nextReset.map { max(5, min(60, $0.timeIntervalSinceNow + 1)) } ?? 60
+            self.nextLiveQuotaRead = ProcessInfo.processInfo.systemUptime + interval
+            self.refreshMenu()
+            self.pushUsage()
+            if self.usageQuotaAccount != result.account { await self.refreshUsage() }
+        }
+        pushUsage()
+    }
+
+    private static func codexExecutable() -> URL? {
+        let relative = "Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+        let desktop = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex")
+        var candidates = [desktop?.appendingPathComponent(relative),
+                          URL(fileURLWithPath: "/Applications/ChatGPT.app").appendingPathComponent(relative),
+                          URL(fileURLWithPath: "/Applications/Codex.app").appendingPathComponent(relative)].compactMap { $0 }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        candidates += [home.appendingPathComponent(".local/bin/codex"),
+                       URL(fileURLWithPath: "/opt/homebrew/bin/codex"), URL(fileURLWithPath: "/usr/local/bin/codex")]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
     private func pushSnapshot() {
@@ -641,6 +717,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             chrome.update(body)
             showingUsage = body["view"] as? String == "usage"
             if !showingUsage { usageDayTask?.cancel() }
+            else { requestLiveQuotaIfNeeded() }
         case "usageDay":
             if showingUsage, let day = body["day"] as? String, day.utf8.count == 10,
                let request = body["request"] as? Int, request > 0 {
@@ -831,6 +908,17 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                 if let office = payload?["office"] as? [String: Any] {
                     self.applyMenuBarMetric(office["menu_bar_metric"])
                     self.applyOfficeLanguage(office["language"])
+                    let enabled = office["live_quota"] as? Bool ?? false
+                    if enabled != self.liveQuotaEnabled {
+                        self.liveQuotaEnabled = enabled
+                        self.liveQuotaTask?.cancel()
+                        self.liveQuotaTask = nil
+                        self.liveQuota = nil
+                        self.nextLiveQuotaRead = 0
+                        self.pushUsage()
+                        if !enabled && self.usageQuotaAccount != nil { await self.refreshUsage() }
+                    }
+                    self.requestLiveQuotaIfNeeded()
                     self.snapshot?.payload["visible_sections"] = office["visible_sections"]
                     if let changes, changes.keys.contains(where: { ["coordination_section", "projects", "thread_projects"].contains($0) }) {
                         await self.refreshActivity()
@@ -964,6 +1052,10 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 extension OfficeApplication {
     func primeOffscreenUsage() async throws {
         _ = try await usageCollector.snapshot(refreshPrices: false)
+    }
+
+    func refreshOffscreenUsage() async {
+        await refreshUsage()
     }
 
     func loadOffscreenPanel(preferLiquidGlass: Bool = true) -> (NSPanel, WKWebView) {

@@ -37,7 +37,7 @@ class LocalServiceTests(unittest.TestCase):
         legacy_office = {'projects': {str(project): 'Existing alias'},
                          'coordination_section': 'Existing section', 'thread_projects': {identifier: str(project)}}
         migrated_office = {**legacy_office, 'menu_bar_metric': 'token_speed', 'visible_sections': None,
-                           'language': 'zh-CN'}
+                           'language': 'zh-CN', 'live_quota': False}
         legacy.write_text(json.dumps({**legacy_office, 'always_on_top': True, 'other': 'do not copy'}))
         original = legacy.read_bytes()
         result = subprocess.run([*self.command, '--import-settings', str(legacy)], capture_output=True, timeout=5)
@@ -78,6 +78,18 @@ class LocalServiceTests(unittest.TestCase):
         self.assertEqual(snapshot['menu_bar_metric'], 'plan_remaining')
         self.assertIn('error', rejected)
         self.assertEqual(self.request({'operation': 'loadSettings'}), [saved])
+
+    def test_live_quota_is_off_by_default_and_accepts_only_booleans(self):
+        initial, enabled, rejected, after = self.request(
+            {'operation': 'loadSettings'},
+            {'operation': 'saveSettings', 'changes': {'live_quota': True}},
+            {'operation': 'saveSettings', 'changes': {'live_quota': 0}},
+            {'operation': 'loadSettings'},
+        )
+        self.assertIs(initial['office']['live_quota'], False)
+        self.assertIs(enabled['office']['live_quota'], True)
+        self.assertIn('error', rejected)
+        self.assertEqual(after, enabled)
 
     def test_interface_language_persists_without_changing_configured_section(self):
         identifier = str(UUID(int=21))

@@ -10,6 +10,7 @@
     '办公室': 'Office',
     '面板视图': 'Panel views',
     '办公室缩放': 'Office zoom',
+    '当前缩放比例': 'Current zoom level',
     '缩小办公室': 'Zoom out',
     '放大办公室': 'Zoom in',
     '重置办公室缩放': 'Reset office zoom',

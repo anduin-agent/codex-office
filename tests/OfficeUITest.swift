@@ -307,14 +307,10 @@ enum OfficeUITest {
         let tallScreen = NSRect(x: 0, y: 0, width: 1440, height: 1000)
         office.offscreenPanelBounds = tallScreen
         let regular = OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 2)
-        let three = OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 3)
-        let maximum = OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 4)
         let shortScreen = NSRect(x: 0, y: 0, width: 1440, height: 640)
-        let short = OfficeChrome.panelFrame(in: shortScreen, anchor: nil, floorCount: 4)
-        guard regular.height < three.height, three.height < maximum.height, regular.maxY == maximum.maxY,
-              OfficeChrome.panelFrame(in: tallScreen, anchor: nil, floorCount: 20) == maximum,
-              shortScreen.contains(short), short.height < maximum.height else {
-            throw Failure("The panel must grow for three and four floors, with a fixed ceiling and screen bounds")
+        let short = OfficeChrome.panelFrame(in: shortScreen, anchor: nil, floorCount: 3, officeHeight: 775, officeWidth: 775)
+        guard shortScreen.contains(short), short.height <= shortScreen.height else {
+            throw Failure("The panel must stay within the screen when there is less room than three full floors")
         }
         _ = try await view.evaluateJavaScript("""
             document.querySelector('#close-settings').click();
@@ -353,7 +349,14 @@ enum OfficeUITest {
                     !document.querySelector('.idle-floor[data-floor=dev]');
             })()
             """)
-        guard panel.frame == maximum else { throw Failure("The native panel did not grow to the four-floor height") }
+        for _ in 0..<40 {
+            if panel.frame.height > regular.height { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let maximum = panel.frame
+        guard maximum.height > regular.height, maximum.maxY == regular.maxY else {
+            throw Failure("The native panel did not grow to the three-floor height")
+        }
         _ = try await view.evaluateJavaScript("document.querySelector('#office-sections button[title=想法]').click()")
         let floorNavigation = """
             (() => {
@@ -429,19 +432,19 @@ enum OfficeUITest {
         _ = try await view.evaluateJavaScript("""
             window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:['dev','review','empty']}, null, {});
             """)
-        for _ in 0..<40 {
-            if panel.frame == three { break }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        guard panel.frame == three else { throw Failure("The native panel did not shrink to the three-floor height") }
-        try await expect("Three full-size floors fit at their native height", panel, view, """
+        try await expect("Three floors fit exactly at the new default size", panel, view, """
             (() => {
                 const scene = document.querySelector('.office-scene');
                 const floors = [...document.querySelectorAll('.floor-marker')];
+                const spacing = parseFloat(floors[1].style.top)-parseFloat(floors[0].style.top);
+                const originalViewport = window.officePreferredSceneHeight-(innerHeight-scene.offsetHeight);
+                const originalScale = Math.min((window.officeReferenceWidth-24)/13.85,(originalViewport-24)/8.88);
+                const expectedSpacing = originalScale*1.2*4.55*Math.cos(27*Math.PI/180);
                 return floors.length===3 && scene.scrollHeight===scene.clientHeight &&
-                    Math.abs(parseFloat(floors[1].style.top)-parseFloat(floors[0].style.top)-window.officeFloorSpacing)<1;
+                    Math.abs(spacing-expectedSpacing)<1 && Math.abs(spacing-window.officeFloorSpacing)<1;
             })()
             """)
+        guard panel.frame == maximum else { throw Failure("Extra floors must keep the panel capped at three floors") }
         _ = try await view.evaluateJavaScript("document.querySelector('#office-sections button[title=稍后]').click()")
         try await expect("Selecting an already visible floor highlights only that floor", panel, view, """
             document.querySelector('.office-scene').scrollTop===0 &&
@@ -460,10 +463,10 @@ enum OfficeUITest {
         guard panel.frame == regular else { throw Failure("Usage must retain the regular native panel height") }
         _ = try await view.evaluateJavaScript("document.querySelector('#show-office').click()")
         for _ in 0..<40 {
-            if panel.frame == three { break }
+            if panel.frame == maximum { break }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        guard panel.frame == three else { throw Failure("Returning to the office must restore the floor height") }
+        guard panel.frame == maximum else { throw Failure("Returning to the office must restore the floor height") }
         _ = try await view.evaluateJavaScript("""
             window.officeSetSnapshot({...window.sectionSnapshot,visible_sections:['dev','review']}, null, {});
             """)
@@ -597,7 +600,7 @@ enum OfficeUITest {
                 return Math.abs(window.zoomSpacing()/window.defaultZoomSpacing-1.2)<.02 &&
                     scene.scrollHeight>scene.clientHeight &&
                     Math.abs(canvas.left-scene.getBoundingClientRect().left)<1 &&
-                    document.querySelector('#office-zoom').textContent.trim()==='';
+                    document.querySelector('#office-zoom-value').value==='120%';
             })()
             """)
         try await expectSavedZoom(120, settings: settings)
@@ -623,6 +626,7 @@ enum OfficeUITest {
         try await expect("Reset returns to the original scale and zoom controls belong to the office view", panel, view, """
             window.zoomHiddenInUsage &&
             document.querySelector('#office-zoom-reset').disabled &&
+            document.querySelector('#office-zoom-value').value==='100%' &&
             Math.abs(window.zoomSpacing()-window.defaultZoomSpacing)<1
             """)
         try await expectSavedZoom(100, settings: settings)
@@ -636,7 +640,8 @@ enum OfficeUITest {
             })()
             """)
         try await expect("Modified wheel zooms the scene and ordinary wheel events remain available for scrolling", panel, view, """
-            window.regularWheelScrolls && Math.abs(window.zoomSpacing()/window.defaultZoomSpacing-1.25)<.02
+            window.regularWheelScrolls && document.querySelector('#office-zoom-value').value==='125%' &&
+            Math.abs(window.zoomSpacing()/window.defaultZoomSpacing-1.25)<.02
             """)
         try await expectSavedZoom(125, settings: settings)
         _ = try await view.evaluateJavaScript("""

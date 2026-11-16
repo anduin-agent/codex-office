@@ -91,8 +91,12 @@
     .office-sections button[aria-pressed="true"] { background: var(--active); color: var(--accent); font-weight: 650; }
     .icon-button { display: grid; place-items: center; width: 30px; height: 29px; padding: 0; }
     .icon-button svg { width: 16px; height: 16px; }
-    .office-zoom { display: flex; gap: 5px; margin-inline-start: auto; }
+    .office-zoom { display: flex; align-items: center; gap: 5px; margin-inline-start: auto; }
     .office-zoom .icon-button { min-width: 28px; width: 28px; height: 28px; padding: 0; }
+    .office-zoom-value {
+      min-width: 4ch; text-align: center; color: var(--text);
+      font-size: 12px; font-variant-numeric: tabular-nums;
+    }
     .office-scene { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; }
     .office-scene::-webkit-scrollbar { width: 9px; height: 9px; }
     .office-scene::-webkit-scrollbar-thumb {
@@ -465,6 +469,7 @@
           <circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.3 15.3 4.7 4.7M8 10.5h5"/>
         </svg>
       </button>
+      <output id="office-zoom-value" class="office-zoom-value" aria-label="当前缩放比例" aria-live="off">100%</output>
       <button id="office-zoom-in" class="icon-button" type="button" aria-label="放大办公室" title="放大办公室">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.3 15.3 4.7 4.7M8 10.5h5m-2.5-2.5v5"/>
@@ -745,6 +750,7 @@
   const scene = document.querySelector('.office-scene');
   const stage = document.querySelector('.stage');
   const zoomControls = byId('office-zoom');
+  const zoomValue = byId('office-zoom-value');
   const zoomOut = byId('office-zoom-out');
   const zoomIn = byId('office-zoom-in');
   const zoomReset = byId('office-zoom-reset');
@@ -802,9 +808,10 @@
   const COS_PITCH = Math.cos(PITCH), SIN_PITCH = Math.sin(PITCH);
   const PROJECT = 4.55, WORK = 0.00;
   const PROJECT_SECTION = 'system:projects';
-  const MAX_VISIBLE_FLOORS = 4;
+  const MAX_VISIBLE_FLOORS = window.officeMaximumVisibleFloors ?? 3;
   const FLOOR_PITCH = PROJECT*COS_PITCH;
   const TWO_FLOOR_VIEW = 8.88;
+  const SCENE_WIDTH = 13.85;
   const MIN_ZOOM = 60, DEFAULT_ZOOM = 100, MAX_ZOOM = 160, ZOOM_STEP = 10;
   let officeZoom = window.officeInitialZoom ?? DEFAULT_ZOOM;
   let gestureZoom;
@@ -2985,24 +2992,29 @@
     if (showingUsage) renderUsagePlan();
   }
 
+  function officeSceneScale() {
+    const standardHeight = layout.sectionMode && nativeToolbar
+      ? Math.max(25,window.officePreferredSceneHeight-(innerHeight-scene.offsetHeight))
+      : scene.offsetHeight;
+    const width = layout.sectionMode && nativeToolbar ? window.officeReferenceWidth : scene.offsetWidth;
+    return (window.officeBaseScale ?? 1)*Math.min((width-24)/SCENE_WIDTH,(standardHeight-24)/TWO_FLOOR_VIEW);
+  }
+
+  function officeFloorHeight(count,scale) {
+    return Math.ceil(24+(TWO_FLOOR_VIEW+(count-2)*FLOOR_PITCH)*scale-.01);
+  }
+
   function sizeScene() {
     const viewportWidth = scene.clientWidth;
     const viewportHeight = scene.clientHeight;
     if (viewportWidth<=24 || viewportHeight<=24) return;
     const ratio = Math.min(2,devicePixelRatio||1,Math.sqrt(3000000/(viewportWidth*viewportHeight)));
     const levels = Math.max(0,layout.floors.length-1);
-    const zoom = officeZoom/100;
-    const standardHeight = layout.sectionMode && nativeToolbar
-      ? Math.max(25,window.officePreferredSceneHeight-(innerHeight-scene.offsetHeight))
-      : scene.offsetHeight;
-    // Keep the original two-floor scale as the panel grows and give extra floors scrollable space.
-    const fitWidth = zoom>1 ? scene.offsetWidth : viewportWidth;
-    const scale = zoom*Math.min((fitWidth-24)/13.85,(standardHeight-24)/TWO_FLOOR_VIEW);
-    const width = zoom>1 ? Math.max(viewportWidth,Math.ceil(24+13.85*scale-0.01)) : viewportWidth;
+    const scale = officeZoom/100*officeSceneScale();
+    const width = officeZoom>DEFAULT_ZOOM ? Math.max(viewportWidth,Math.ceil(24+SCENE_WIDTH*scale-.01)) : viewportWidth;
     const floorSpacing = FLOOR_PITCH*scale;
-    const sceneUnits = TWO_FLOOR_VIEW+(levels-1)*FLOOR_PITCH;
     const height = layout.floors.length
-      ? Math.max(viewportHeight,Math.ceil(24+sceneUnits*scale-0.01)) : viewportHeight;
+      ? Math.max(viewportHeight,officeFloorHeight(layout.floors.length,scale)) : viewportHeight;
     const floor = height*0.5+(levels ? (layout.sectionMode ? levels*floorSpacing/2 : scale*2.06) : 0);
     view = {width,height,viewportWidth,viewportHeight,ratio,scale,floor};
     if (stage.style.width!==width+'px') stage.style.width = width+'px';
@@ -3026,6 +3038,7 @@
       if (zoomAnchor.y!==null) scene.scrollTop = view.floor+zoomAnchor.y*view.scale-zoomAnchor.top;
     }
     if (state.visible && !showingUsage) {
+      updateToolbarState();
       arrangeAgentRobots();
       updateGeometry();
       updateMarkers();
@@ -3034,6 +3047,7 @@
   }
 
   function updateZoomControls() {
+    zoomValue.value = officeZoom+'%';
     zoomOut.disabled = officeZoom<=MIN_ZOOM;
     zoomIn.disabled = officeZoom>=MAX_ZOOM;
     zoomReset.disabled = officeZoom===DEFAULT_ZOOM;
@@ -3657,16 +3671,22 @@
 
   function updateToolbarState() {
     if (!nativeToolbar) return;
+    const floorCount = !showingUsage && layout.sectionMode ? Math.min(layout.floors.length,MAX_VISIBLE_FLOORS) : 0;
     const message = {
       action:'toolbarState',
       view:showingUsage?'usage':'office',
       source:source.textContent,
       sourceStatus:source.dataset.status,
-      floorCount:layout.sectionMode ? Math.min(layout.floors.length,MAX_VISIBLE_FLOORS) : 0,
+      floorCount,
       runningCount:source.dataset.running==='true' ? layout.active.length-layout.waiting.length : 0,
       waitingCount:layout.waiting.length,
       collaborationTitle:collaborationButton.textContent
     };
+    if (floorCount && scene.offsetHeight>24) {
+      const scale = officeSceneScale();
+      message.officeWidth = Math.ceil(24+SCENE_WIDTH*scale-.01);
+      message.officeHeight = officeFloorHeight(floorCount,scale)+innerHeight-scene.offsetHeight;
+    }
     const key = JSON.stringify(message);
     if (key===lastToolbarState) return;
     lastToolbarState = key;

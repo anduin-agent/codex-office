@@ -9,7 +9,7 @@ Codex Office is a macOS menu bar app for keeping track of local Codex chats. See
 Open the DMG, drag **Codex Office** into Applications, then open it. Click the robot in the menu bar to open the panel.
 
 - **Apple silicon:** macOS 12 or later. **Intel:** macOS 13 or later.
-- The v0.1.0 app uses an ad hoc signature and has not been notarized by Apple. macOS may block the first launch.
+- The app uses an ad hoc signature and has not been notarized by Apple. macOS may block the first launch.
 - The installed app does not need Python, Apple Command Line Tools, or `zstd`.
 
 ### If macOS blocks the first launch
@@ -25,7 +25,7 @@ Use these steps if macOS says it can't verify the developer or check the app for
 ## Office
 
 - **See what needs you.** Running chats have animated workstations. When Codex Desktop reports a pending approval or question, the robot stops typing, looks up, and shows a waiting label. Double-click its workstation to open the chat.
-- **Track subagents.** The scene shows subagents in relation to their parent chat. Use the local Codex sidebar sections to choose which chats appear in the office.
+- **Browse office floors.** Codex Projects and custom sidebar sections get their own floors. Click a section to jump to its floor. The default view fits three floors when the screen has room, with scrolling for the rest. The zoom controls show the current percentage and save your setting.
 - **Read the menu bar at a glance.** It shows the running chat count, or the waiting count when someone needs a response. Choose one metric to show alongside it: today's tokens, tokens per minute, or remaining plan quota. The robot's pace follows the last minute of usage.
 - **Follow cross-project work.** Set a coordination section to see successful dispatches detected in local Codex logs. You can also choose the chats yourself and record their acknowledgments. Manual recording saves the relationship locally and does not start a Codex task.
 
@@ -35,7 +35,7 @@ Use these steps if macOS says it can't verify the developer or check the app for
 - **See which chats used the most.** Rankings combine each main chat with its subagents and linked automatic reviews. Expand a group to see its sessions. Reviews without a verified parent are grouped under **Unassigned automatic reviews**.
 - **Drill down.** Open **Usage details** to filter by date, project, or model and inspect a session's token and model breakdown.
 - **Compare quota cycles.** When the local logs contain weekly or 5-hour quota records, the panel shows the remaining percentage, reset time, and countdown. It compares estimated token capacity for the current and last recorded cycle when both have enough data.
-- **Check live account quota.** Enable **Live account quota** in Office Settings to query OpenAI through your installed Codex while the Usage tab is visible or the menu bar shows quota. The Usage tab shows the source and reading time. If the query fails, Office shows local quota only when it can match it to the current account.
+- **Check live account quota.** **Live account quota** is on by default and uses your existing Codex sign-in while the Usage tab is visible or the menu bar shows quota. Local logs provide usage details and can fill missing quota windows for the same account. The Usage tab labels the sources, and you can turn off live queries in Office Settings.
 
 API cost figures are USD equivalents based on [OpenAI's standard API prices](https://developers.openai.com/api/docs/pricing). They are separate from subscription charges. The app includes a rate table and checks for price updates at most once per local day while the panel is open. It marks estimates that cover only part of the recorded usage.
 

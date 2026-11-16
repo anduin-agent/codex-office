@@ -155,20 +155,23 @@ private final class OfficeToolbar: NSView {
 @MainActor
 final class OfficeChrome: NSView {
     static let preferredPanelSize = NSSize(width: 708, height: 620)
-    static let maximumVisibleFloors = 4
+    static let maximumVisibleFloors = 3
+    static let officeScale = 1.2
     private static let toolbarHeight: CGFloat = 42
     private static let dividerHeight: CGFloat = 1
     private static let sceneTopSpacing: CGFloat = 3
     private static let sceneBottomSpacing: CGFloat = 14
-    static let preferredSceneHeight = preferredPanelSize.height
-        - toolbarHeight - dividerHeight - sceneTopSpacing - sceneBottomSpacing
+    private static let chromeHeight = toolbarHeight + dividerHeight + sceneTopSpacing + sceneBottomSpacing
+    static let preferredSceneHeight = preferredPanelSize.height - chromeHeight
 
-    static func panelFrame(in visibleFrame: NSRect, anchor: NSRect?, floorCount: Int) -> NSRect {
+    static func panelFrame(in visibleFrame: NSRect, anchor: NSRect?, floorCount: Int,
+                           officeHeight: CGFloat? = nil, officeWidth: CGFloat? = nil) -> NSRect {
         let bounds = visibleFrame.insetBy(dx: 8, dy: 6)
         let top = min(bounds.maxY, (anchor?.minY ?? bounds.maxY + 6) - 6)
-        let width = min(preferredPanelSize.width, bounds.width)
-        let extraFloors = max(0, min(floorCount, maximumVisibleFloors) - 2)
-        let preferredHeight = preferredPanelSize.height + min(250, CGFloat(extraFloors) * 160)
+        let width = min(floorCount > 0 ? officeWidth ?? preferredPanelSize.width : preferredPanelSize.width, bounds.width)
+        let preferredHeight = floorCount > 0
+            ? officeHeight.map { $0 + chromeHeight } ?? preferredPanelSize.height
+            : preferredPanelSize.height
         let height = min(preferredHeight, max(1, top - bounds.minY))
         let center = anchor?.midX ?? bounds.maxX
         let left = min(max(bounds.minX, center - width / 2), bounds.maxX - width)

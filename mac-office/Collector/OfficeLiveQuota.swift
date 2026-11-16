@@ -91,7 +91,8 @@ struct OfficeLiveQuota: Sendable {
         var plan: String?
         do {
             try send(["id": 1, "method": "initialize", "params": [
-                "clientInfo": ["name": "codex-office", "title": "Codex Office", "version": "0.1.0"],
+                "clientInfo": ["name": "codex-office", "title": "Codex Office",
+                               "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"],
                 "capabilities": ["experimentalApi": true],
             ]])
             _ = try response(1)

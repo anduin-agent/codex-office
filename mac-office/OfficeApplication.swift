@@ -174,6 +174,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var usageLoaded = false
     private var showingUsage = false
     private var officeFloorCount = 0
+    private var officePreferredSize: NSSize?
     private var officeZoom: Int
     private var usageDayTask: Task<Void, Never>?
     private var collaboration: Collaboration?
@@ -465,7 +466,9 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         #endif
         if let visibleFrame {
             let frame = OfficeChrome.panelFrame(in: visibleFrame, anchor: anchor,
-                                               floorCount: showingUsage ? 0 : officeFloorCount)
+                                               floorCount: showingUsage ? 0 : officeFloorCount,
+                                               officeHeight: officePreferredSize?.height,
+                                               officeWidth: officePreferredSize?.width)
             if window.frame != frame { window.setFrame(frame, display: window.isVisible) }
         }
         sizeChromeToPanel()
@@ -544,6 +547,9 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             source: """
                 window.officeNativeToolbar = true;
                 window.officePreferredSceneHeight = \(OfficeChrome.preferredSceneHeight);
+                window.officeReferenceWidth = \(OfficeChrome.preferredPanelSize.width - 28);
+                window.officeBaseScale = \(OfficeChrome.officeScale);
+                window.officeMaximumVisibleFloors = \(OfficeChrome.maximumVisibleFloors);
                 window.officeInitialZoom = \(officeZoom);
                 window.officeInitialLanguage = '\(language.rawValue)';
                 """,
@@ -741,9 +747,17 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             chrome.update(body)
             let usageView = body["view"] as? String == "usage"
             let floorCount = min(OfficeChrome.maximumVisibleFloors, max(0, body["floorCount"] as? Int ?? 0))
-            let resizePanel = showingUsage != usageView || officeFloorCount != floorCount
+            let preferredSize: NSSize?
+            if let width = body["officeWidth"] as? Int, (1...1600).contains(width),
+               let height = body["officeHeight"] as? Int, (1...1600).contains(height) {
+                preferredSize = NSSize(width: width + 28, height: height)
+            } else {
+                preferredSize = nil
+            }
+            let resizePanel = showingUsage != usageView || officeFloorCount != floorCount || officePreferredSize != preferredSize
             showingUsage = usageView
             officeFloorCount = floorCount
+            officePreferredSize = preferredSize
             if resizePanel && windowVisible { positionWindow() }
             #if OFFICE_UI_TEST
             if resizePanel && offscreenPanelBounds != nil && !windowVisible { positionWindow() }

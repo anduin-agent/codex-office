@@ -8,7 +8,7 @@ Codex Office 是一个 macOS 菜单栏 App，用来查看本机 Codex 聊天。�
 
 打开 DMG，把 **Codex Office** 拖进「应用程序」并启动。点击菜单栏的小机器人即可打开面板。
 
-- **Apple 芯片**需要 macOS 12 或更新版本，**Intel 芯片**需要 macOS 13 或更新版本。
+- **Apple 芯片**请选择 `-apple-silicon.dmg`，需要 macOS 12 或更新版本。**Intel 芯片**请选择 `-intel.dmg`，需要 macOS 13 或更新版本。
 - App 使用临时签名，未经过 Apple 公证。首次打开时 macOS 可能拦截。
 - 安装后无需另装 Python、Apple 命令行工具或 `zstd`。
 
@@ -56,7 +56,9 @@ make mac-office
 open "build/Codex Office.app"
 ```
 
-发布构建用 `OFFICE_RELEASE_REPO=owner/repo` 指定 GitHub 仓库，并使用 `v0.1.0` 这样的标签发布正式版本，即可启用「检查更新」。
+要为指定芯片构建，运行 `make mac-office OFFICE_ARCH=arm64`（Apple 芯片）或 `make mac-office OFFICE_ARCH=x86_64`（Intel）。每次构建都输出到 `build/Codex Office.app`。
+
+发布构建用 `OFFICE_RELEASE_REPO=owner/repo` 指定 GitHub 仓库，并使用 `v0.2.1` 这样的标签发布正式版本，即可启用「检查更新」。
 
 采集器优先使用 `CODEX_HOME`，默认读取 `~/.codex`。也可以在启动时指定其他 Codex 目录。
 

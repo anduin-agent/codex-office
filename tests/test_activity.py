@@ -142,6 +142,48 @@ class CodexActivityTests(unittest.TestCase):
         self.assertEqual(rows[self.owner]["project_id"], project_id(managed))
         self.assertFalse(rows[unregistered]["sidebar_project"])
 
+    def test_chats_inherit_the_desktop_project_section(self):
+        direct, assigned, native, projectless = (str(UUID(int=i)) for i in range(2, 6))
+        for thread, workspace in ((self.owner, self.a), (direct, self.a), (assigned, self.b),
+                                  (native, self.b), (projectless, self.a)):
+            self.start(thread, workspace, thread)
+        self.sidebar((direct, str(self.a), "Direct", 0, 0, "section-a", None),
+                     (native, str(self.b), "Native", 0, 0, None, None))
+        with sqlite3.connect(self.home / "state_5.sqlite") as db:
+            db.executescript("""
+                ALTER TABLE threads ADD COLUMN project_id TEXT;
+                UPDATE threads SET project_id = 'native-project' WHERE name = 'Native';
+                INSERT INTO thread_sections VALUES ('saved-work', '工作');
+            """)
+        current_section = {"id": "desktop-work", "name": "工作", "itemKeys": ["codex:project:legacy-project"]}
+        state = {
+            "electron-renderer-content-owner": "current-owner",
+            "electron-owner-atoms:current-owner": {
+                "sidebar-custom-sections-v3": {"workspace": {"sections": [current_section]}}
+            },
+            "local-projects": {"legacy-project": {"rootPaths": [str(self.a)]}},
+            "app-server-project-id-by-legacy-project-id-by-host": {
+                "local:" + str(self.home): {"legacy-project": "native-project"}
+            },
+            "thread-project-assignments": {assigned: {"projectKind": "local", "projectId": "legacy-project"}},
+            "projectless-thread-ids": [projectless],
+        }
+        preferences = self.home / ".codex-global-state.json"
+        preferences.write_text(json.dumps(state), encoding="utf-8")
+
+        snapshot = self.scan(20)
+        self.assertEqual([section for section in snapshot["sidebar"]["sections"] if section["name"] == "工作"],
+                         [{"id": "saved-work", "name": "工作"}])
+        rows = {row["id"]: row["section_id"] for row in snapshot["threads"]}
+        self.assertEqual(rows, {self.owner: "saved-work", direct: "section-a", assigned: "saved-work",
+                                native: "saved-work", projectless: None})
+
+        current_section.update(id="desktop-lab", name="实验")
+        preferences.write_text(json.dumps(state), encoding="utf-8")
+        moved = self.rows(21)
+        self.assertEqual(moved[self.owner]["section_id"], "desktop-lab")
+        self.assertEqual(moved[direct]["section_id"], "section-a")
+
     def test_confirmed_wait_keeps_the_root_visible_and_clears_after_reply(self):
         parent = self.start(self.owner, self.a, self.turn)
         child = str(UUID(int=2))

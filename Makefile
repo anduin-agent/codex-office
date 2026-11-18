@@ -1,15 +1,18 @@
 .PHONY: mac-office test test-ui
 
 OFFICE_BUNDLE_ID ?= local.codex-office
+OFFICE_ARCH ?= $(shell uname -m)
+OFFICE_MIN_MACOS = $(if $(filter x86_64,$(OFFICE_ARCH)),13.0,12.0)
 export OFFICE_BUNDLE_ID
+export OFFICE_MIN_MACOS
 export OFFICE_RELEASE_REPO
-OFFICE_TARGET = $(shell uname -m)-apple-macosx12.0
+OFFICE_TARGET = $(OFFICE_ARCH)-apple-macosx$(OFFICE_MIN_MACOS)
 ZSTD_DIR = mac-office/Collector/Zstd
-ZSTD_OBJECT = build/zstddeclib-$(shell uname -m).o
+ZSTD_OBJECT = build/zstddeclib-$(OFFICE_TARGET).o
 COLLECTOR_SOURCES = $(wildcard mac-office/Collector/*.swift)
 COLLECTOR_FLAGS = -I $(ZSTD_DIR) -lsqlite3
 OFFICE_SOURCES = mac-office/OfficeApplication.swift mac-office/OfficeChrome.swift mac-office/OfficeReleaseCheck.swift mac-office/UsageDetailWindow.swift mac-office/TokenMeter.swift $(COLLECTOR_SOURCES)
-SWIFT_FLAGS = -swift-version 6 -O -parse-as-library -target "$(OFFICE_TARGET)" -module-cache-path build/swift-module-cache
+SWIFT_FLAGS = -swift-version 6 -O -parse-as-library -target "$(OFFICE_TARGET)" -module-cache-path "build/swift-module-cache/$(OFFICE_TARGET)"
 
 mac-office: $(ZSTD_OBJECT)
 	@test -f mac-office/Resources/office.html
@@ -24,6 +27,7 @@ mac-office: $(ZSTD_OBJECT)
 			-o "$$bundle/Contents/MacOS/CodexOffice"; \
 		cp mac-office/Info.plist "$$bundle/Contents/Info.plist"; \
 		plutil -replace CFBundleIdentifier -string "$$OFFICE_BUNDLE_ID" "$$bundle/Contents/Info.plist"; \
+		plutil -replace LSMinimumSystemVersion -string "$$OFFICE_MIN_MACOS" "$$bundle/Contents/Info.plist"; \
 		if revision=$$(git rev-parse --short=8 HEAD 2>/dev/null); then \
 			plutil -insert OfficeSourceRevision -string "$$revision" "$$bundle/Contents/Info.plist"; \
 		fi; \
@@ -31,6 +35,7 @@ mac-office: $(ZSTD_OBJECT)
 			plutil -insert OfficeReleaseRepository -string "$$OFFICE_RELEASE_REPO" "$$bundle/Contents/Info.plist"; \
 		fi; \
 		ditto mac-office/Resources "$$bundle/Contents/Resources"; \
+		cp LICENSE "$$bundle/Contents/Resources/LICENSE.txt"; \
 		cp "$(ZSTD_DIR)/LICENSE" "$$bundle/Contents/Resources/Zstandard-LICENSE.txt"; \
 		codesign --force --sign - "$$bundle"; \
 		rm -rf "build/Codex Office.app"; \

@@ -142,6 +142,7 @@ final class CodexActivity {
     private var namesAt: Date?
     private var sidebarMemberships: [String: String] = [:]
     private var knownSidebarIDs = Set<String>()
+    private var sidebarProjects = OfficeSidebarProjects()
     private var managedDirectories: [[String: String]] = []
     private var managedDirectoriesAt: Date?
 
@@ -245,8 +246,12 @@ final class CodexActivity {
             if root == id || attentionTargets[root] == nil { attentionTargets[root] = id }
         }
         let linked = coordination.linkedThreads(sources: sources)
+        let linkedWorkspaces = linked.compactMapValues { officeCanonicalPath($0.cwd) }
+        let sidebarWorkspaces = sources.compactMapValues(\.workspace).merging(linkedWorkspaces) { rollout, _ in rollout }
         let sidebarIDs = Set(sources.keys).union(linked.keys)
-        var (sidebar, assignments) = readOfficeSidebar(home, threadIDs: sidebarIDs)
+        sidebarProjects.refresh(home)
+        var (sidebar, assignments) = readOfficeSidebar(home, threadIDs: sidebarIDs, workspaces: sidebarWorkspaces,
+                                                       desktopProjects: sidebarProjects)
         sidebar["has_projects"] = !managedDirectories.isEmpty
         if sidebar["source_status"] as? String == "ok" {
             sidebarMemberships = assignments
@@ -263,7 +268,7 @@ final class CodexActivity {
             namesAt = now
         }
         var locations = Set(sources.values.compactMap(\.workspace))
-        locations.formUnion(linked.values.compactMap { officeCanonicalPath($0.cwd) })
+        locations.formUnion(linkedWorkspaces.values)
         for source in sources.values {
             for edit in source.edits.values { locations.formUnion(edit.locations) }
         }
@@ -302,7 +307,7 @@ final class CodexActivity {
             threads.append((last, id, row))
         }
         for (id, metadata) in linked where sources[id] == nil {
-            let workspace = officeCanonicalPath(metadata.cwd)
+            let workspace = linkedWorkspaces[id]
             let origin = projects.membership(id: id, workspace: workspace)
             let seconds = metadata.last ?? 0
             let last = Date(timeIntervalSince1970: (-62_135_596_800..<253_402_300_800).contains(seconds) ? seconds : 0)

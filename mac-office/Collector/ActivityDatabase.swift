@@ -210,7 +210,101 @@ func usageThreadRelations(home: URL) -> (ids: Set<String>, relations: [String: U
     return (ids, relations)
 }
 
-func readOfficeSidebar(_ home: URL, threadIDs: Set<String> = []) -> (OfficeJSON, [String: String]) {
+/// Project placement lives in desktop preferences even when chat placement lives in SQLite.
+struct OfficeSidebarProjects {
+    private var signature: ActivityFileSignature?
+    private var sections: [(id: String, name: String, projects: [String])] = []
+    private var projectAssignments: [String: String] = [:]
+    private var projectless = Set<String>()
+    private var legacyIDs: [String: String] = [:]
+    private var roots: [String] = []
+    private var projectsByRoot: [String: Set<String>] = [:]
+
+    mutating func refresh(_ home: URL) {
+        let path = home.appendingPathComponent(".codex-global-state.json")
+        let current = try? ActivityFileSignature(path: path)
+        guard current != signature else { return }
+        guard current?.regular == true else {
+            self = Self()
+            return
+        }
+        guard let state = readOfficeDesktopState(home) else { return }
+
+        self = Self()
+        signature = current
+        let owner = state["electron-renderer-content-owner"] as? String
+        let atoms = owner.flatMap { state["electron-owner-atoms:\($0)"] as? OfficeJSON }
+            ?? (owner == nil ? state["electron-persisted-atom-state"] as? OfficeJSON : nil)
+        let layouts = atoms?["sidebar-custom-sections-v3"] as? [String: OfficeJSON] ?? [:]
+        guard layouts.count == 1, let rows = layouts.values.first?["sections"] as? [OfficeJSON],
+              let localProjects = state["local-projects"] as? [String: OfficeJSON] else { return }
+        let prefix = "codex:project:"
+        for row in rows {
+            guard let id = row["id"] as? String, officeValidSectionID(id),
+                  let name = displayTitle(row["name"] as? String) else { continue }
+            let projects = (row["itemKeys"] as? [String] ?? []).compactMap { key -> String? in
+                guard key.hasPrefix(prefix) else { return nil }
+                let project = String(key.dropFirst(prefix.count))
+                return localProjects[project] == nil ? nil : project
+            }
+            if !projects.isEmpty { sections.append((id, name, projects)) }
+        }
+        guard !sections.isEmpty else { return }
+
+        for (id, project) in localProjects {
+            for value in project["rootPaths"] as? [String] ?? [] {
+                if officeValidText(value, limit: 4096), let root = officeCanonicalPath(value) {
+                    projectsByRoot[root, default: []].insert(id)
+                }
+            }
+        }
+        roots = projectsByRoot.keys.sorted { ($0.count, $0) > ($1.count, $1) }
+        for (id, assignment) in state["thread-project-assignments"] as? [String: OfficeJSON] ?? [:] {
+            if let thread = officeThreadID(id), assignment["projectKind"] as? String == "local",
+               let project = assignment["projectId"] as? String {
+                projectAssignments[thread] = project
+            }
+        }
+        projectless = Set((state["projectless-thread-ids"] as? [String] ?? []).compactMap(officeThreadID))
+        let migrations = state["app-server-project-id-by-legacy-project-id-by-host"] as? [String: [String: String]]
+        for (legacy, native) in migrations?["local:" + home.path] ?? [:] {
+            legacyIDs[native] = legacy
+        }
+    }
+
+    func appendSections(to known: inout [[String: String]]) -> [String: String] {
+        let existing = Dictionary(grouping: known, by: { $0["name"] })
+        let desktop = Dictionary(grouping: sections, by: \.name)
+        var ids = Set(known.compactMap { $0["id"] })
+        var memberships: [String: String] = [:]
+        for section in sections {
+            // The same desktop section can have different IDs in the two stores.
+            // Keep the existing ID when the name uniquely identifies it.
+            let candidates = existing[section.name] ?? []
+            let match = candidates.count == 1 && desktop[section.name]?.count == 1 ? candidates.first?["id"] : nil
+            let id = ids.contains(section.id) ? section.id : match ?? section.id
+            if ids.insert(id).inserted { known.append(["id": id, "name": section.name]) }
+            for project in section.projects where memberships[project] == nil {
+                memberships[project] = id
+            }
+        }
+        return memberships
+    }
+
+    func project(for thread: String, native: String?, workspace: String?) -> String? {
+        if let native { return legacyIDs[native] ?? native }
+        if projectless.contains(thread) { return nil }
+        if let assigned = projectAssignments[thread] { return assigned }
+        guard let workspace, let root = roots.first(where: { activityPath(workspace, liesIn: $0) }),
+              let projects = projectsByRoot[root], projects.count == 1 else { return nil }
+        return projects.first
+    }
+}
+
+func readOfficeSidebar(_ home: URL, threadIDs: Set<String> = [], workspaces: [String: String] = [:],
+                       desktopProjects: OfficeSidebarProjects? = nil) -> (OfficeJSON, [String: String]) {
+    var desktop = desktopProjects ?? OfficeSidebarProjects()
+    if desktopProjects == nil { desktop.refresh(home) }
     for path in stateDatabases(in: home) {
         do {
             let database = try ActivityDatabase(path)
@@ -227,13 +321,23 @@ func readOfficeSidebar(_ home: URL, threadIDs: Set<String> = []) -> (OfficeJSON,
                 sections.append(["id": id, "name": name])
             }
             let knownSections = Set(sections.compactMap { $0["id"] })
+            let projectSections = desktop.appendSections(to: &sections)
             var memberships: [String: String] = [:]
+            var nativeProjects: [String: String] = [:]
+            let projectColumn = !projectSections.isEmpty && threadColumns.contains("project_id") ? "project_id" : "NULL"
             try batches(threadIDs) { batch, placeholders in
-                let query = "SELECT id,thread_section_id FROM threads WHERE id IN (\(placeholders))"
+                let query = "SELECT id,thread_section_id,\(projectColumn) FROM threads WHERE id IN (\(placeholders))"
                 try database.rows(query, batch) { row in
-                    guard let id = databaseText(row, 0), let section = databaseText(row, 1),
-                          knownSections.contains(section) else { return }
-                    memberships[id] = section
+                    guard let id = databaseText(row, 0) else { return }
+                    if let section = databaseText(row, 1), knownSections.contains(section) { memberships[id] = section }
+                    nativeProjects[id] = databaseText(row, 2)
+                }
+            }
+            if !projectSections.isEmpty {
+                for id in threadIDs where memberships[id] == nil {
+                    if let project = desktop.project(for: id, native: nativeProjects[id], workspace: workspaces[id]) {
+                        memberships[id] = projectSections[project]
+                    }
                 }
             }
             return (["source_status": "ok", "sections": sections], memberships)
@@ -259,16 +363,7 @@ func readOfficeProjectDirectories(_ home: URL) -> [[String: String]] {
     }
 
     // Older desktop versions registered projects in the global state file.
-    let path = home.appendingPathComponent(".codex-global-state.json")
-    let descriptor = open(path.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
-    guard descriptor >= 0 else { return [] }
-    let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-    defer { try? file.close() }
-    let limit = 32 * 1024 * 1024
-    var info = stat()
-    guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size <= limit,
-          let bytes = try? file.read(upToCount: limit + 1), bytes.count <= limit,
-          let state = (try? JSONSerialization.jsonObject(with: bytes)) as? OfficeJSON else { return [] }
+    guard let state = readOfficeDesktopState(home) else { return [] }
 
     if let projects = state["local-projects"] as? [String: OfficeJSON] {
         let order = state["project-order"] as? [String] ?? []
@@ -287,6 +382,19 @@ func readOfficeProjectDirectories(_ home: URL) -> [[String: String]] {
         .filter { $0.hasPrefix("electron-owner-value:\(key):") }
         .flatMap { state[$0] as? [Any] ?? [] }
     return officeProjectDirectories(paths.map { ($0 as? String, nil) })
+}
+
+private func readOfficeDesktopState(_ home: URL) -> OfficeJSON? {
+    let path = home.appendingPathComponent(".codex-global-state.json")
+    let descriptor = open(path.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+    guard descriptor >= 0 else { return nil }
+    let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    defer { try? file.close() }
+    let limit = 32 * 1024 * 1024
+    var info = stat()
+    guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size <= limit,
+          let bytes = try? file.read(upToCount: limit + 1), bytes.count <= limit else { return nil }
+    return (try? JSONSerialization.jsonObject(with: bytes)) as? OfficeJSON
 }
 
 private func officeProjectDirectories(_ entries: [(String?, String?)]) -> [[String: String]] {

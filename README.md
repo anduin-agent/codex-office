@@ -8,7 +8,7 @@ Codex Office is a macOS menu bar app for keeping track of local Codex chats. See
 
 Open the DMG, drag **Codex Office** into Applications, then open it. Click the robot in the menu bar to open the panel.
 
-- **Apple silicon:** macOS 12 or later. **Intel:** macOS 13 or later.
+- **Apple silicon:** choose the `-apple-silicon.dmg` file (macOS 12 or later). **Intel:** choose the `-intel.dmg` file (macOS 13 or later).
 - The app uses an ad hoc signature and has not been notarized by Apple. macOS may block the first launch.
 - The installed app does not need Python, Apple Command Line Tools, or `zstd`.
 
@@ -56,7 +56,9 @@ make mac-office
 open "build/Codex Office.app"
 ```
 
-To enable **Check for Updates** in a release build, set `OFFICE_RELEASE_REPO=owner/repo` and publish a stable GitHub release with a version tag such as `v0.1.0`.
+To build for a specific chip, pass `OFFICE_ARCH=arm64` (Apple silicon) or `OFFICE_ARCH=x86_64` (Intel) to `make mac-office`. Each build writes to `build/Codex Office.app`.
+
+To enable **Check for Updates** in a release build, set `OFFICE_RELEASE_REPO=owner/repo` and publish a stable GitHub release with a version tag such as `v0.2.1`.
 
 The collector uses `CODEX_HOME` when it is set and otherwise reads `~/.codex`. You can also point an instance at another Codex directory.
 

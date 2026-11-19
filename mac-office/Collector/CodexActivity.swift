@@ -143,6 +143,10 @@ final class CodexActivity {
     private var sidebarMemberships: [String: String] = [:]
     private var knownSidebarIDs = Set<String>()
     private var sidebarProjects = OfficeSidebarProjects()
+    private(set) var pipelineWorkspaces: [String: String] = [:]
+    var pipelineProjectPaths: [String] {
+        Set(pipelineWorkspaces.values).union(managedDirectories.compactMap { $0["path"] }).sorted()
+    }
     private var managedDirectories: [[String: String]] = []
     private var managedDirectoriesAt: Date?
 
@@ -248,6 +252,7 @@ final class CodexActivity {
         let linked = coordination.linkedThreads(sources: sources)
         let linkedWorkspaces = linked.compactMapValues { officeCanonicalPath($0.cwd) }
         let sidebarWorkspaces = sources.compactMapValues(\.workspace).merging(linkedWorkspaces) { rollout, _ in rollout }
+        pipelineWorkspaces = sidebarWorkspaces
         let sidebarIDs = Set(sources.keys).union(linked.keys)
         sidebarProjects.refresh(home)
         var (sidebar, assignments) = readOfficeSidebar(home, threadIDs: sidebarIDs, workspaces: sidebarWorkspaces,

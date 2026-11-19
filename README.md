@@ -28,6 +28,7 @@ Use these steps if macOS says it can't verify the developer or check the app for
 - **Browse office floors.** Codex Projects and custom sidebar sections get their own floors. Click a section to jump to its floor. The default view fits three floors when the screen has room, with scrolling for the rest. The zoom controls show the current percentage and save your setting.
 - **Read the menu bar at a glance.** It shows the running chat count, or the waiting count when someone needs a response. Choose one metric to show alongside it: today's tokens, tokens per minute, or remaining plan quota. The robot's pace follows the last minute of usage.
 - **Follow cross-project work.** Set a coordination section to see successful dispatches detected in local Codex logs. You can also choose the chats yourself and record their acknowledgments. Manual recording saves the relationship locally and does not start a Codex task.
+- **See CI and deployments.** Open **CI / Deployments** and choose a GitHub repository. **Latest CI** pairs workflow progress with Vercel deployments for the same commit. When none match, it labels the latest frontend deployment with its own commit and time. Expand **Run history and job details** to inspect older jobs while the summary follows the latest run.
 
 ## Usage
 
@@ -47,6 +48,12 @@ Settings save as you change them. Choose Simplified Chinese, English, or the sys
 
 Codex Office reads session logs, compressed archives, and the Codex desktop database locally. Its settings are stored in `~/Library/Application Support/Codex Office/office.json`. Manually recorded collaboration and acknowledgments stay in the app's macOS preferences.
 
+In **Office Settings → Robot skin**, select local images or import a folder. Each robot draws an image when it appears and keeps it while it stays in the scene. Skins appear in front of the desks. Animated GIFs play as imported, and the system Reduce Motion setting shows their first frame. Importing replaces the current set, which can hold up to 256 images. Copies stay on this Mac in `~/Library/Application Support/Codex Office/robot-skins.plist`. **Restore Default** removes them. GIF playback is limited to 180 KiB, 512×512 pixels, 120 frames, and 8 million pixels across all frames. Larger GIFs and other animated formats use their first frame.
+
+With a custom skin set active, turn off **Show desks** to hide workstation furniture. Subagents keep their skins, statuses, and animated data links. The links connect beside the characters when desks are hidden.
+
+**CI / Deployments** makes read-only queries for the selected target in the visible view. Office finds GitHub repositories using local `origin` URLs and remembers the last selection and which repositories use the existing `gh` sign-in. **Link Vercel project** saves the project ID and optional team ID per repository, shared across local checkouts. Existing `.vercel/project.json` and `.vercel/repo.json` links also work. Vercel queries use a signed-in CLI with `vercel api` support. Each CLI manages its own credentials.
+
 ## Build from source
 
 Building from source requires Apple Command Line Tools with the macOS 26 SDK or later.
@@ -58,7 +65,7 @@ open "build/Codex Office.app"
 
 To build for a specific chip, pass `OFFICE_ARCH=arm64` (Apple silicon) or `OFFICE_ARCH=x86_64` (Intel) to `make mac-office`. Each build writes to `build/Codex Office.app`.
 
-To enable **Check for Updates** in a release build, set `OFFICE_RELEASE_REPO=owner/repo` and publish a stable GitHub release with a version tag such as `v0.2.1`.
+To enable **Check for Updates** in a release build, set `OFFICE_RELEASE_REPO=owner/repo` and publish a stable GitHub release with a version tag such as `v0.3.0`.
 
 The collector uses `CODEX_HOME` when it is set and otherwise reads `~/.codex`. You can also point an instance at another Codex directory.
 

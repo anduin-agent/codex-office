@@ -38,6 +38,18 @@ actor OfficeActivityCollector {
         readOfficeProjectDirectories(home)
     }
 
+    func pipelineWorkspace(for threadID: String) -> String? {
+        activity.pipelineWorkspaces[threadID]
+    }
+
+    func pipelineProjectPaths() -> [String] {
+        activity.pipelineProjectPaths
+    }
+
+    func updatePipelinePreference(_ change: OfficePipelinePreferenceChange) throws {
+        try settings.updatePipelinePreference(change)
+    }
+
     func officeSettings(changes: Data?) throws -> Data {
         try Task.checkCancellation()
         let document: OfficeJSON

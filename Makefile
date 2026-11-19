@@ -11,7 +11,7 @@ ZSTD_DIR = mac-office/Collector/Zstd
 ZSTD_OBJECT = build/zstddeclib-$(OFFICE_TARGET).o
 COLLECTOR_SOURCES = $(wildcard mac-office/Collector/*.swift)
 COLLECTOR_FLAGS = -I $(ZSTD_DIR) -lsqlite3
-OFFICE_SOURCES = mac-office/OfficeApplication.swift mac-office/OfficeChrome.swift mac-office/OfficeReleaseCheck.swift mac-office/UsageDetailWindow.swift mac-office/TokenMeter.swift $(COLLECTOR_SOURCES)
+OFFICE_SOURCES = mac-office/OfficeApplication.swift mac-office/OfficeChrome.swift mac-office/OfficeReleaseCheck.swift mac-office/OfficeRobotSkin.swift mac-office/UsageDetailWindow.swift mac-office/TokenMeter.swift $(COLLECTOR_SOURCES)
 SWIFT_FLAGS = -swift-version 6 -O -parse-as-library -target "$(OFFICE_TARGET)" -module-cache-path "build/swift-module-cache/$(OFFICE_TARGET)"
 
 mac-office: $(ZSTD_OBJECT)

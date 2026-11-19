@@ -37,7 +37,7 @@ class LocalServiceTests(unittest.TestCase):
         legacy_office = {'projects': {str(project): 'Existing alias'},
                          'coordination_section': 'Existing section', 'thread_projects': {identifier: str(project)}}
         migrated_office = {**legacy_office, 'menu_bar_metric': 'token_speed', 'visible_sections': None,
-                           'language': 'zh-CN', 'live_quota': True, 'office_zoom': 100}
+                           'language': 'zh-CN', 'live_quota': True, 'office_zoom': 100, 'show_skin_desks': True}
         legacy.write_text(json.dumps({**legacy_office, 'always_on_top': True, 'other': 'do not copy'}))
         original = legacy.read_bytes()
         result = subprocess.run([*self.command, '--import-settings', str(legacy)], capture_output=True, timeout=5)

@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import OSLog
 import ServiceManagement
+import UniformTypeIdentifiers
 import WebKit
 
 private func autoReceiptKey(coordinatorID: String, threadID: String) -> String? {
@@ -77,6 +78,11 @@ private struct ActivitySnapshot {
     }
 }
 
+private enum PipelineSelection: Equatable {
+    case repository(String)
+    case workspace(String)
+}
+
 private struct Collaboration: Codable {
     struct Executor: Codable {
         let thread_id: UUID
@@ -121,6 +127,11 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private let codexHome: URL
     private let activityCollector: OfficeActivityCollector
     private let usageCollector: OfficeUsageCollector
+    private let pipeline: OfficePipeline
+    private let robotSkin: OfficeRobotSkin
+    private var robotSkinImages: [Data]
+    private var robotSkinRevision = 0
+    private var importingRobotSkin = false
     private let defaults = UserDefaults.standard
     private let collaborationKey = "officeCollaboration"
     private let autoReceiptsKey = "officeAutoReceipts"
@@ -149,7 +160,13 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var localClickMonitor: Any?
     private var settingsTask: Task<Void, Never>?
     private var projectDirectoriesTask: Task<Void, Never>?
-    private var projectDirectoryPanel: NSOpenPanel?
+    private var pipelineRepositoriesTask: Task<Void, Never>?
+    private var pipelineRepositories: [String: [OfficePipelineWorkspace]] = [:]
+    private var pipelinePreferences: OfficePipelinePreferences
+    private var pipelinePreferenceWrite: Task<Void, Never>?
+    private var pipelineTask: Task<Void, Never>?
+    private var pipelineResult: (request: Int, selection: PipelineSelection, useCLI: Bool, snapshot: OfficePipelineSnapshot)?
+    private var filePicker: NSOpenPanel?
     private var releaseTask: Task<Void, Never>?
     private var newerReleaseFound = false
     private let releaseCheck = OfficeReleaseCheck(repository: Bundle.main.object(forInfoDictionaryKey: "OfficeReleaseRepository") as? String)
@@ -158,6 +175,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     #if OFFICE_UI_TEST
     private var testLoginEnabled = false
     var offscreenProjectDirectoryPicker: ((String?) -> URL?)?
+    var offscreenRobotSkinPicker: ((Bool) -> [URL])?
     var offscreenPanelBounds: NSRect?
     #endif
     private var pendingPanelAction: OfficeToolbarAction?
@@ -176,6 +194,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var officeFloorCount = 0
     private var officePreferredSize: NSSize?
     private var officeZoom: Int
+    private var showSkinDesks: Bool
     private var usageDayTask: Task<Void, Never>?
     private var collaboration: Collaboration?
     private var autoReceipts: [String: Bool] = [:]
@@ -183,14 +202,21 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     init(sceneURL: URL,
          codexHome: String? = UserDefaults.standard.string(forKey: "officeCodexHome"),
-         configFile: String? = UserDefaults.standard.string(forKey: "officeConfigFile")) {
+         configFile: String? = UserDefaults.standard.string(forKey: "officeConfigFile"),
+         pipeline: OfficePipeline = OfficePipeline()) {
         self.sceneURL = sceneURL.standardizedFileURL
+        self.pipeline = pipeline
         let home = OfficeCollectorPaths.codexHome(codexHome)
         let settings = OfficeCollectorPaths.settings(configFile)
+        let skin = OfficeRobotSkin(file: settings.url.deletingLastPathComponent().appendingPathComponent("robot-skins.plist"))
+        robotSkin = skin
+        robotSkinImages = skin.load()
         self.codexHome = home
         let document = try? settings.load()
+        pipelinePreferences = OfficePipelinePreferences(document)
         liveQuotaEnabled = document?["live_quota"] as? Bool ?? OfficeSettings.defaultLiveQuota
         officeZoom = document?["office_zoom"] as? Int ?? 100
+        showSkinDesks = document?["show_skin_desks"] as? Bool ?? true
         let preference = settings.preferredLanguage()
         languagePreference = preference
         language = preference.resolved
@@ -253,6 +279,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         usageDetailWindow?.stop()
         settingsTask?.cancel()
         projectDirectoriesTask?.cancel()
+        closePipeline()
         releaseTask?.cancel()
         tokenMeter?.stop()
         stopClickMonitors()
@@ -438,7 +465,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     @objc private func toggleWindow() {
-        guard projectDirectoryPanel == nil else { return }
+        guard filePicker == nil else { return }
         if windowVisible {
             hideWindow()
         } else {
@@ -484,7 +511,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     private func hideWindow() {
-        projectDirectoryPanel?.cancel(nil)
+        filePicker?.cancel(nil)
+        closePipeline()
         window.orderOut(nil)
         stopClickMonitors()
         syncVisibility()
@@ -511,7 +539,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     private func dismissForOutsideClick() {
         let mouse = NSEvent.mouseLocation
-        guard projectDirectoryPanel == nil, windowVisible, !window.frame.contains(mouse),
+        guard filePicker == nil, windowVisible, !window.frame.contains(mouse),
               statusButtonFrame?.contains(mouse) != true else { return }
         hideWindow()
         menuLog.debug("Dismissed office panel after an outside click")
@@ -539,6 +567,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     }
 
     private func loadScene() {
+        closePipeline()
         sceneReady = false
         chrome.setReady(false)
         let controller = webView.configuration.userContentController
@@ -551,6 +580,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                 window.officeBaseScale = \(OfficeChrome.officeScale);
                 window.officeMaximumVisibleFloors = \(OfficeChrome.maximumVisibleFloors);
                 window.officeInitialZoom = \(officeZoom);
+                window.officeInitialShowSkinDesks = \(showSkinDesks);
                 window.officeInitialLanguage = '\(language.rawValue)';
                 """,
             injectionTime: .atDocumentStart, forMainFrameOnly: true
@@ -584,6 +614,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         sceneReady = true
         chrome.setReady(true)
         pushLanguage()
+        pushRobotSkin()
         syncVisibility()
         performPanelActionIfReady()
     }
@@ -717,8 +748,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    private func pushSnapshot() {
-        guard sceneReady, windowVisible, let snapshot else { return }
+    private func pushSnapshot(allowOffscreen: Bool = false) {
+        guard sceneReady, windowVisible || allowOffscreen, let snapshot else { return }
         webView.callAsyncJavaScript(
             "window.officeSetSnapshot(snapshot, collaboration, autoReceipts);",
             arguments: [
@@ -785,12 +816,75 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             requestOfficeSettings(nil)
         case "loadProjectDirectories":
             requestProjectDirectories()
+        case "loadPipelineRepositories":
+            if let request = body["request"] as? Int, request > 0 {
+                requestPipelineRepositories(request: request)
+            }
+        case "rememberPipelineRepository":
+            if let repository = body["repository"] as? String, pipelineRepositories[repository] != nil {
+                rememberPipelinePreference(.repository(repository))
+            } else if body["repository"] is NSNull {
+                rememberPipelinePreference(.repository(nil))
+            }
+        case "rememberPipelineAuthentication":
+            if let repository = body["repository"] as? String, pipelineRepositories[repository] != nil,
+               let useCLI = body["useCLI"] as? Bool {
+                rememberPipelinePreference(.authentication(repository: repository, useCLI: useCLI))
+            }
+        case "rememberPipelineVercelProject":
+            if let repository = body["repository"] as? String, pipelineRepositories[repository] != nil {
+                if body["project"] is NSNull {
+                    rememberPipelinePreference(.vercelProject(repository: repository, project: nil))
+                } else if let value = body["project"] as? OfficeJSON, let project = OfficePipelinePreferences.vercelProject(value) {
+                    rememberPipelinePreference(.vercelProject(repository: repository, project: project))
+                }
+            }
+        case "loadPipeline":
+            if let request = body["request"] as? Int, request > 0 {
+                let selection: PipelineSelection?
+                if let repository = body["repository"] as? String {
+                    selection = pipelineRepositories[repository] != nil ? .repository(repository) : nil
+                } else {
+                    selection = officeThreadID(body["id"]).map(PipelineSelection.workspace)
+                }
+                if let selection {
+                    requestPipeline(selection, request: request, selectedRun: body["run"] as? Int,
+                                    automatic: body["automatic"] as? Bool == true)
+                } else {
+                    pushPipeline(OfficePipelineSnapshot(), request: request)
+                }
+            }
+        case "closePipeline":
+            closePipeline()
+        case "openPipelineLink":
+            #if !OFFICE_UI_TEST
+            if windowVisible, let result = pipelineResult, result.request == body["request"] as? Int,
+               let source = body["source"] as? String, let index = body["index"] as? Int,
+               let link = result.snapshot.link(source: source, index: index, releaseIndex: body["release"] as? Int) {
+                NSWorkspace.shared.open(link)
+            }
+            #endif
         case "chooseProjectDirectory":
             if let request = body["request"] as? Int, request > 0 {
                 chooseProjectDirectory(request: request, currentPath: body["path"] as? String)
             }
         case "loadAppSettings":
             pushAppSettings()
+        case "chooseRobotSkin":
+            chooseRobotSkin(folder: body["folder"] as? Bool == true)
+        case "resetRobotSkin":
+            resetRobotSkin()
+        case "loadRobotSkinImage":
+            if let index = body["index"] as? Int, body["revision"] as? Int == robotSkinRevision,
+               robotSkinImages.indices.contains(index) {
+                let image = robotSkinImages[index]
+                let isGIF = OfficeRobotSkin.isGIF(image)
+                let still = isGIF ? OfficeRobotSkin.stillFrame(image)?.base64EncodedString() : nil
+                webView.callAsyncJavaScript("window.officeReceiveRobotSkinImage(image, index, revision, still);",
+                    arguments: ["image": image.base64EncodedString(), "index": index, "revision": robotSkinRevision,
+                                "still": still as Any? ?? NSNull()],
+                    in: nil, in: .page, completionHandler: nil)
+            }
         case "setLoginItem":
             if let enabled = body["enabled"] as? Bool { setLoginItem(enabled) }
         case "openLoginItems":
@@ -955,6 +1049,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
                     self.applyMenuBarMetric(office["menu_bar_metric"])
                     self.applyOfficeLanguage(office["language"])
                     self.officeZoom = office["office_zoom"] as? Int ?? 100
+                    self.showSkinDesks = office["show_skin_desks"] as? Bool ?? true
                     let enabled = office["live_quota"] as? Bool ?? OfficeSettings.defaultLiveQuota
                     if enabled != self.liveQuotaEnabled {
                         self.liveQuotaEnabled = enabled
@@ -1011,11 +1106,102 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         }
     }
 
+    private func requestPipelineRepositories(request: Int) {
+        #if !OFFICE_UI_TEST
+        guard windowVisible else { return }
+        #endif
+        pipelineRepositoriesTask?.cancel()
+        pipelineRepositoriesTask = Task { [weak self] in
+            guard let self else { return }
+            let paths = await self.activityCollector.pipelineProjectPaths()
+            let repositories = await OfficePipelineWorkspace.repositories(in: paths)
+            guard !Task.isCancelled else { return }
+            self.pipelineRepositoriesTask = nil
+            self.pipelineRepositories = repositories
+            self.webView.callAsyncJavaScript("window.officeReceivePipelineRepositories(repositories, preferences, request);",
+                                            arguments: ["repositories": repositories.keys.sorted(), "preferences": self.pipelinePreferences.values,
+                                                        "request": request], in: nil, in: .page,
+                                            completionHandler: nil)
+        }
+    }
+
+    private func rememberPipelinePreference(_ change: OfficePipelinePreferenceChange) {
+        #if !OFFICE_UI_TEST
+        guard windowVisible else { return }
+        #endif
+        let before = pipelinePreferences
+        pipelinePreferences.apply(change)
+        guard before != pipelinePreferences else { return }
+        let previous = pipelinePreferenceWrite
+        pipelinePreferenceWrite = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            do {
+                try await self.activityCollector.updatePipelinePreference(change)
+            } catch {
+                _ = try? await self.webView.evaluateJavaScript("window.officePipelinePreferenceSaveFailed()")
+            }
+        }
+    }
+
+    private func requestPipeline(_ selection: PipelineSelection, request: Int, selectedRun: Int?, automatic: Bool) {
+        #if !OFFICE_UI_TEST
+        guard windowVisible else { return }
+        #endif
+        guard pipelineTask == nil else { return }
+        let useCLI: Bool
+        switch selection {
+        case .repository(let repository): useCLI = pipelinePreferences.ghRepositories.contains(repository)
+        case .workspace: useCLI = false
+        }
+        let preferenceWrite = pipelinePreferenceWrite
+        pipelineTask = Task { [weak self] in
+            await preferenceWrite?.value
+            guard let self, !Task.isCancelled else { return }
+            let previous = self.pipelineResult.flatMap { $0.selection == selection && $0.useCLI == useCLI ? $0.snapshot : nil }
+            let result: OfficePipelineSnapshot
+            switch selection {
+            case .repository(let repository):
+                let workspaces = self.pipelineRepositories[repository] ?? []
+                let project = self.pipelinePreferences.vercelProjects[repository]
+                result = await self.pipeline.repositorySnapshot(repository: repository, workspaces: workspaces, vercelProject: project, useCLI: useCLI,
+                                                                selectedRun: selectedRun, previous: previous, automatic: automatic)
+            case .workspace(let thread):
+                let threads = self.snapshot?.payload["threads"] as? [OfficeJSON] ?? []
+                let hasProject = threads.contains { $0["id"] as? String == thread && $0["project_id"] is String }
+                let workspace = hasProject ? await self.activityCollector.pipelineWorkspace(for: thread) : nil
+                result = await self.pipeline.deploymentSnapshot(workspace: workspace,
+                                                                 vercelProjects: self.pipelinePreferences.vercelProjects,
+                                                                 previous: previous, automatic: automatic)
+            }
+            guard !Task.isCancelled else { return }
+            self.pipelineTask = nil
+            self.pipelineResult = (request, selection, useCLI, result)
+            self.pushPipeline(result, request: request)
+        }
+    }
+
+    private func pushPipeline(_ result: OfficePipelineSnapshot, request: Int) {
+        guard let data = try? JSONEncoder().encode(result),
+              let payload = (try? JSONSerialization.jsonObject(with: data)) as? OfficeJSON else { return }
+        webView.callAsyncJavaScript("window.officeReceivePipeline(result, request);",
+                                   arguments: ["result": payload, "request": request], in: nil, in: .page,
+                                   completionHandler: nil)
+    }
+
+    private func closePipeline() {
+        pipelineRepositoriesTask?.cancel()
+        pipelineRepositoriesTask = nil
+        pipelineTask?.cancel()
+        pipelineTask = nil
+        pipelineResult = nil
+    }
+
     private func chooseProjectDirectory(request: Int, currentPath: String?) {
         #if OFFICE_UI_TEST
         reportProjectDirectory(offscreenProjectDirectoryPicker?(currentPath), request: request)
         #else
-        guard windowVisible, window.attachedSheet == nil, projectDirectoryPanel == nil else {
+        guard windowVisible, window.attachedSheet == nil, filePicker == nil else {
             reportProjectDirectory(nil, request: request)
             return
         }
@@ -1029,10 +1215,10 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         if let currentPath, officeValidText(currentPath, limit: 4096), currentPath.hasPrefix("/") {
             panel.directoryURL = URL(fileURLWithPath: currentPath, isDirectory: true)
         }
-        projectDirectoryPanel = panel
+        filePicker = panel
         panel.beginSheetModal(for: window) { [weak self, weak panel] response in
             guard let self else { return }
-            self.projectDirectoryPanel = nil
+            self.filePicker = nil
             self.reportProjectDirectory(response == .OK ? panel?.url : nil, request: request)
         }
         #endif
@@ -1044,6 +1230,93 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             "window.officeReceiveProjectDirectory(path, request);",
             arguments: ["path": path as Any? ?? NSNull(), "request": request], in: nil, in: .page, completionHandler: nil
         )
+    }
+
+    private func chooseRobotSkin(folder: Bool) {
+        guard !importingRobotSkin else { return }
+        #if OFFICE_UI_TEST
+        importRobotSkin(offscreenRobotSkinPicker?(folder) ?? [], folder: folder)
+        #else
+        guard windowVisible, window.attachedSheet == nil, filePicker == nil else {
+            pushRobotSkin()
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.title = folder
+            ? language.text("选择机器人皮肤文件夹", "Choose a robot skin folder")
+            : language.text("选择机器人皮肤图片", "Choose robot skin images")
+        panel.prompt = language.text("选择", "Choose")
+        if !folder { panel.allowedContentTypes = [.image] }
+        panel.canChooseFiles = !folder
+        panel.canChooseDirectories = folder
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = !folder
+        filePicker = panel
+        panel.beginSheetModal(for: window) { [weak self, weak panel] response in
+            guard let self else { return }
+            self.filePicker = nil
+            self.importRobotSkin(response == .OK ? panel?.urls ?? [] : [], folder: folder)
+        }
+        #endif
+    }
+
+    private func importRobotSkin(_ urls: [URL], folder: Bool) {
+        guard !urls.isEmpty else {
+            pushRobotSkin()
+            return
+        }
+        importingRobotSkin = true
+        pushRobotSkin("importing")
+        let storage = robotSkin
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Result {
+                    let group = try OfficeRobotSkin.prepare(urls, folder: folder)
+                    try storage.save(group.images)
+                    return group
+                }
+            }.value
+            guard let self else { return }
+            self.importingRobotSkin = false
+            switch result {
+            case .success(let group):
+                self.robotSkinImages = group.images
+                self.robotSkinRevision += 1
+                self.pushRobotSkin(group.skipped == 0 ? "saved" : "partial", skipped: group.skipped)
+            case .failure(OfficeRobotSkin.ImportError.invalidImage):
+                self.pushRobotSkin("invalid")
+            case .failure(OfficeRobotSkin.ImportError.tooManyImages):
+                self.pushRobotSkin("tooMany")
+            case .failure:
+                self.pushRobotSkin("storage")
+            }
+        }
+    }
+
+    private func resetRobotSkin() {
+        #if !OFFICE_UI_TEST
+        guard windowVisible else { return }
+        #endif
+        guard !importingRobotSkin, filePicker == nil else {
+            pushRobotSkin()
+            return
+        }
+        do {
+            try robotSkin.remove()
+            robotSkinImages = []
+            robotSkinRevision += 1
+            pushRobotSkin("reset")
+        } catch {
+            pushRobotSkin("storage")
+        }
+    }
+
+    private func pushRobotSkin(_ status: String = "", skipped: Int = 0) {
+        guard sceneReady else { return }
+        webView.callAsyncJavaScript("window.officeReceiveRobotSkin(count, revision, status, busy, skipped);",
+            arguments: ["count": robotSkinImages.count, "revision": robotSkinRevision, "status": status,
+                        "busy": importingRobotSkin, "skipped": skipped],
+            in: nil, in: .page, completionHandler: nil)
     }
 
     private func openChat(_ id: String, from parent: NSWindow? = nil) {
@@ -1105,6 +1378,11 @@ extension OfficeApplication {
         await refreshUsage()
     }
 
+    func refreshOffscreenActivity() async {
+        await refreshActivity()
+        pushSnapshot(allowOffscreen: true)
+    }
+
     func loadOffscreenPanel(preferLiquidGlass: Bool = true) -> (NSPanel, WKWebView) {
         createWindow(preferLiquidGlass: preferLiquidGlass)
         createMenuItems()
@@ -1122,6 +1400,7 @@ extension OfficeApplication {
     }
 
     func stopOffscreenPanel() {
+        closePipeline()
         usageDetailWindow?.stop()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "office")
     }

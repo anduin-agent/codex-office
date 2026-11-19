@@ -83,13 +83,15 @@ enum OfficeUITest {
                 try await checkToolbar(panel, view)
                 try await checkPlusQuota(office, panel, view, home: home)
                 try await checkAgentTeam(panel, view)
+                try await checkRobotSkin(resources: resources, home: home, workspace: workspace)
                 try await checkProjectAliases(office, panel, view, workspace: workspace, settings: settings)
                 try await checkSettings(office, panel, view, settings)
                 try await checkDetailedUsage(office, panel, view)
                 try await checkOfficeSections(office, panel, view)
                 try await checkOfficeZoom(panel, view, settings: settings)
+                try await checkPipeline(resources: resources, home: home, workspace: workspace)
                 office.stopOffscreenPanel()
-                print("Offscreen AppKit glass, toolbar, usage details, and WebKit settings checks passed")
+                print("Offscreen AppKit glass, toolbar, CI and deployments, usage details, and WebKit settings checks passed")
                 exit(EXIT_SUCCESS)
             } catch {
                 office.stopOffscreenPanel()
@@ -1153,6 +1155,798 @@ enum OfficeUITest {
             """)
         _ = try await view.evaluateJavaScript("document.querySelector('#close-settings').click()")
         office.offscreenQuotaExecutable = nil
+    }
+
+    private actor PipelineFixture {
+        static let sha = "0123456789012345678901234567890123456789"
+        static let recentSHA = "fedcba9876543210fedcba9876543210fedcba98"
+        static let frontendSHA = "abcdef0123456789abcdef0123456789abcdef01"
+        var requests: [Bool] = []
+        var actionPaths: [String] = []
+        var releaseRequests: [String] = []
+        var offline = false
+        var terminalState: String?
+
+        func setOffline(_ value: Bool) { offline = value }
+        func setTerminalState(_ value: String?) { terminalState = value }
+
+        func fetch(_ path: String, useCLI: Bool) throws -> Data {
+            requests.append(useCLI)
+            actionPaths.append(path)
+            guard !offline else { throw Failure("Offline fixture") }
+            let ciState = terminalState == nil ? #""status":"in_progress""# : #""status":"completed","conclusion":"success""#
+            switch path {
+            case "repos/example/ci-fixture/actions/runs?per_page=8":
+                return Data("""
+                {"workflow_runs":[
+                  {"id":8,"name":"Lint","head_sha":"\(Self.sha)","head_branch":"main","status":"completed","conclusion":"success","created_at":"2026-11-18T11:00:00Z","run_started_at":"2026-11-18T11:00:00Z"},
+                  {"id":7,"name":"CI","head_sha":"\(Self.recentSHA)","head_branch":"feature/recent",\(ciState),"run_attempt":2,"created_at":"2026-11-18T10:00:00Z","run_started_at":"2026-11-18T12:00:00Z"}
+                ]}
+                """.utf8)
+            case "repos/example/ci-fixture/actions/runs/7/attempts/2/jobs?per_page=30":
+                let name = useCLI ? "Private tests" : "Run tests <script>"
+                return Data("""
+                {"jobs":[{"name":"Tests",\(ciState),"steps":[
+                  {"name":"Checkout","status":"completed","conclusion":"success"},
+                  {"name":"\(name)",\(ciState)}
+                ]}]}
+                """.utf8)
+            case "repos/example/ci-fixture/actions/runs/8/attempts/1/jobs?per_page=30":
+                return Data(#"{"jobs":[{"name":"Lint job","status":"completed","conclusion":"success"}]}"#.utf8)
+            case "repos/example/another-fixture/actions/runs?per_page=8":
+                return Data("""
+                {"workflow_runs":[{"id":9,"name":"Other CI","head_sha":"\(Self.recentSHA)","head_branch":"develop","status":"completed","conclusion":"success"}]}
+                """.utf8)
+            case "repos/example/another-fixture/actions/runs/9/attempts/1/jobs?per_page=30":
+                return Data(#"{"jobs":[{"name":"Second repository tests","status":"completed","conclusion":"success"}]}"#.utf8)
+            default: throw Failure("Unexpected CI endpoint")
+            }
+        }
+
+        func fetchVercel(_ path: String) throws -> Data {
+            releaseRequests.append(path)
+            guard !offline else { throw Failure("Offline fixture") }
+            if path == "/v7/deployments?projectId=prj_manual&limit=10&teamId=team_manual&sha=\(Self.recentSHA)" {
+                return Data(#"{"deployments":[]}"#.utf8)
+            }
+            if path == "/v7/deployments?projectId=prj_manual&limit=1&teamId=team_manual" {
+                return Data("""
+                {"deployments":[{"projectId":"prj_manual","name":"frontend","readyState":"READY",
+                  "meta":{"githubCommitRef":"frontend/recent","githubCommitSha":"\(Self.frontendSHA)"}}]}
+                """.utf8)
+            }
+            let correlatedPrefix = "/v7/deployments?projectId=prj_web&limit=10&teamId=team_fixture&sha="
+            if path.hasPrefix(correlatedPrefix) {
+                let commit = String(path.dropFirst(correlatedPrefix.count))
+                guard [Self.sha, Self.recentSHA].contains(commit) else { throw Failure("Unexpected correlated commit") }
+                let state = terminalState == "success" ? "READY" : terminalState == "failure" ? "ERROR" : "BUILDING"
+                return Data("""
+                {"deployments":[
+                  {"projectId":"prj_web","name":"web","readyState":"\(state)","target":null,
+                   "meta":{"githubCommitRef":"feature/recent","githubCommitSha":"\(commit)"}},
+                  {"projectId":"prj_web","name":"web","readyState":"ERROR","errorCode":"FOREIGN_COMMIT",
+                   "meta":{"githubCommitSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+                ]}
+                """.utf8)
+            }
+            guard path == "/v7/deployments?projectId=prj_web&limit=10&teamId=team_fixture"
+                    || path == "/v7/deployments?projectId=prj_nested&limit=10&teamId=team_nested" else {
+                throw Failure("Unexpected release endpoint")
+            }
+            return Data("""
+            {"deployments":[
+              {"projectId":"prj_web","name":"web","readyState":"BUILDING","target":null,"created":1700000000000,
+               "meta":{"githubCommitRef":"feature/ci","githubCommitSha":"\(Self.sha)"},
+               "inspectorUrl":"https://vercel.com/team/web/abc?value=ignored"},
+              {"projectId":"prj_web","name":"web","readyState":"READY","target":"production","readySubstate":"STAGED"},
+              {"projectId":"prj_web","name":"web","readyState":"ERROR","target":"production","errorCode":"BUILD_FAILED",
+               "inspectorUrl":"https://vercel.com.example/team/web/abc"},
+              {"projectId":"prj_other","readyState":"READY","target":"production"}
+            ]}
+            """.utf8)
+        }
+    }
+
+    @MainActor
+    private static func checkPipeline(resources: URL, home: URL, workspace: URL) async throws {
+        let fixture = PipelineFixture()
+        let settings = workspace.appendingPathComponent("pipeline-office.json")
+        let office = OfficeApplication(
+            sceneURL: resources.appendingPathComponent("office.html"), codexHome: home.path,
+            configFile: settings.path,
+            pipeline: OfficePipeline(fetch: { try await fixture.fetch($0, useCLI: $1) },
+                                     deploymentProviders: [OfficeVercelDeployments(fetch: { try await fixture.fetchVercel($0) })])
+        )
+        let (panel, view) = office.loadOffscreenPanel()
+        defer { office.stopOffscreenPanel() }
+        let repository = workspace.appendingPathComponent("pipeline-repo")
+        let git = repository.appendingPathComponent(".git")
+        let config = git.appendingPathComponent("config")
+        let vercel = repository.appendingPathComponent(".vercel", isDirectory: true)
+        let binding = vercel.appendingPathComponent("project.json")
+        let id = "00000000-0000-0000-0000-000000000009"
+        let now = ISO8601DateFormatter().string(from: Date())
+        let repositories = [
+            (repository, id, "git@github.com:example/ci-fixture.git"),
+            (workspace.appendingPathComponent("pipeline-repo-other"), "00000000-0000-0000-0000-000000000010",
+             "https://github.com/example/another-fixture.git"),
+            (workspace.appendingPathComponent("pipeline-repo-duplicate"), "00000000-0000-0000-0000-000000000011",
+             "https://github.com/EXAMPLE/CI-FIXTURE.git"),
+        ]
+        let sessions = repositories.map { home.appendingPathComponent("sessions/pipeline-\($0.1).jsonl") }
+        defer {
+            for session in sessions { try? FileManager.default.removeItem(at: session) }
+            for (directory, _, _) in repositories { try? FileManager.default.removeItem(at: directory) }
+        }
+        for (index, entry) in repositories.enumerated() {
+            let (directory, threadID, origin) = entry
+            let localGit = directory.appendingPathComponent(".git")
+            try FileManager.default.createDirectory(at: localGit.appendingPathComponent("refs/heads"), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: localGit.appendingPathComponent("objects"), withIntermediateDirectories: true)
+            try "[remote \"origin\"]\n\turl = \(origin)\n"
+                .write(to: localGit.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+            try "ref: refs/heads/main\n".write(to: localGit.appendingPathComponent("HEAD"), atomically: true, encoding: .utf8)
+            try (PipelineFixture.sha + "\n").write(to: localGit.appendingPathComponent("refs/heads/main"), atomically: true, encoding: .utf8)
+            let meta = try JSONSerialization.data(withJSONObject: ["id": threadID, "cwd": directory.path])
+            try """
+            {"timestamp":"\(now)","type":"session_meta","payload":\(String(decoding: meta, as: UTF8.self))}
+            {"timestamp":"\(now)","type":"event_msg","payload":{"type":"task_started","turn_id":"ci-fixture"}}
+
+            """.write(to: sessions[index], atomically: true, encoding: .utf8)
+        }
+        try FileManager.default.createDirectory(at: vercel, withIntermediateDirectories: true)
+        try #"{"projectId":"prj_web","orgId":"team_fixture","projectName":"web"}"#
+            .write(to: binding, atomically: true, encoding: .utf8)
+
+        try await expect("The CI fixture office has initialized", panel, view, "typeof window.officeSetSnapshot==='function'")
+        await office.refreshOffscreenActivity()
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetVisible(true);
+            document.querySelector('#show-usage').click();
+            document.querySelector('#show-pipeline').click();
+            """)
+        try await expect("Actions opens as a repository page with unique local GitHub origins", panel, view, """
+            (() => {
+                const picker = document.querySelector('#pipeline-repository');
+                const repositories = [...picker.options].map(option => option.value.toLowerCase()).filter(Boolean);
+                return document.querySelector('.view-tabs > #show-pipeline').getAttribute('aria-pressed')==='true' &&
+                    document.querySelector('#show-usage').getAttribute('aria-pressed')==='false' &&
+                    document.querySelector('#show-office').getAttribute('aria-pressed')==='false' &&
+                    !document.querySelector('#pipeline-panel').hidden &&
+                    document.querySelector('#office-view').hidden && document.querySelector('#usage-panel').hidden &&
+                    document.querySelector('#office-zoom').hidden && picker.value==='' &&
+                    document.querySelector('#pipeline-show-actions').getAttribute('aria-pressed')==='true' &&
+                    document.querySelector('#pipeline-show-releases').getAttribute('aria-pressed')==='false' &&
+                    !!document.querySelector('#pipeline-workspace').parentElement.closest('[hidden]') &&
+                    repositories.length===2 && new Set(repositories).size===2 &&
+                    repositories.includes('example/ci-fixture') && repositories.includes('example/another-fixture');
+            })()
+            """)
+        let initialRequests = await (fixture.requests, fixture.releaseRequests)
+        guard initialRequests.0.isEmpty, initialRequests.1.isEmpty else {
+            throw Failure("A provider was queried before a repository or release project was selected")
+        }
+        _ = try await view.evaluateJavaScript("""
+            window.officeOriginalReceivePipeline = window.officeReceivePipeline;
+            window.officeReceivePipeline = (data, request) => {
+                window.officeLatestPipeline = data;
+                window.officeOriginalReceivePipeline(data, request);
+            };
+            (() => {
+                const picker = document.querySelector('#pipeline-repository');
+                picker.value = 'example/ci-fixture';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("Repository Actions includes recent runs from other commits and branches", panel, view, """
+            !document.querySelector('#pipeline-panel').hidden &&
+            document.querySelector('#pipeline-revision').textContent==='example/ci-fixture' &&
+            document.querySelector('#pipeline-run').selectedOptions[0]?.textContent.includes('第 2 次运行') &&
+            document.querySelector('#pipeline-run').selectedOptions[0]?.textContent.includes('feature/recent') &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Run tests <script>') &&
+            !document.querySelector('#pipeline-jobs script') &&
+            !!document.querySelector('#pipeline-deployments').closest('[hidden]') &&
+            !document.querySelector('#pipeline-progress').closest('[hidden]') &&
+            !!document.querySelector('#pipeline-ci-progress [data-state="in_progress"]') &&
+            !!document.querySelector('#pipeline-vercel-progress [data-state="building"]') &&
+            document.querySelector('#pipeline-latest-title').textContent==='最新 CI' &&
+            document.querySelector('#pipeline-progress-context').textContent.includes('feature/recent') &&
+            document.querySelector('#pipeline-progress-context').textContent.includes('fedcba9') &&
+            !document.querySelector('#pipeline-history').open &&
+            !!(document.querySelector('#pipeline-progress').compareDocumentPosition(document.querySelector('#pipeline-history')) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+            !document.querySelector('#pipeline-progress').textContent.includes('FOREIGN_COMMIT') &&
+            document.querySelector('#pipeline-follow-latest').hidden &&
+            window.officeLatestPipeline.releases[0].records.length===1 &&
+            window.officeLatestPipeline.releases[0].isLatestFallback!==true &&
+            !document.querySelector('#pipeline-vercel-progress').textContent.includes('最近一次前端部署') &&
+            window.officeLatestPipeline.releases[0].records[0].commit==='\(PipelineFixture.recentSHA)'
+            """)
+        let pairedPath = "/v7/deployments?projectId=prj_web&limit=10&teamId=team_fixture&sha=\(PipelineFixture.recentSHA)"
+        guard await fixture.requests == [false, false], await fixture.releaseRequests == [pairedPath] else {
+            throw Failure("Actions must pair anonymous CI reads with the latest trigger's full-SHA Vercel query")
+        }
+        await fixture.setTerminalState("success")
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-refresh').click()")
+        try await expect("Refreshing shows CI and Vercel succeeding for the same trigger", panel, view, """
+            !!document.querySelector('#pipeline-ci-progress [data-state="success"]') &&
+            !!document.querySelector('#pipeline-vercel-progress [data-state="ready"]') &&
+            document.querySelector('#pipeline-run').value==='7' &&
+            window.officeLatestPipeline.releases[0].records[0].commit==='\(PipelineFixture.recentSHA)'
+            """)
+        await fixture.setTerminalState("failure")
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-refresh').click()")
+        try await expect("The same-commit overview distinguishes a failed deployment from passing CI", panel, view, """
+            !!document.querySelector('#pipeline-ci-progress [data-state="success"]') &&
+            !!document.querySelector('#pipeline-vercel-progress [data-state="error"]') &&
+            !document.querySelector('#pipeline-progress').textContent.includes('FOREIGN_COMMIT')
+            """)
+        await fixture.setTerminalState(nil)
+        let pairedBeforeUnlinked = await fixture.releaseRequests.count
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const picker = document.querySelector('#pipeline-repository');
+                picker.value = 'example/another-fixture';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("A repository can be selected directly without choosing a chat", panel, view, """
+            document.querySelector('#pipeline-revision').textContent==='example/another-fixture' &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Second repository tests') &&
+            document.querySelector('#pipeline-run').selectedOptions[0]?.textContent.includes('develop') &&
+            document.querySelector('#pipeline-workspace').value===''
+            """)
+        guard await fixture.releaseRequests.count == pairedBeforeUnlinked else {
+            throw Failure("An unlinked repository must not query Vercel")
+        }
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const picker = document.querySelector('#pipeline-repository');
+                picker.value = 'example/ci-fixture';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("Switching repositories restores the chosen repository's recent runs", panel, view,
+                         "document.querySelector('#pipeline-jobs').textContent.includes('Run tests <script>')")
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#pipeline-history > summary').click();
+            (() => {
+                const picker = document.querySelector('#pipeline-run');
+                picker.value = '8';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("Historical job details keep the latest CI and deployment status primary", panel, view, """
+            document.querySelector('#pipeline-history').open &&
+            document.querySelector('#pipeline-run').value==='8' &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Lint job') &&
+            !document.querySelector('#pipeline-follow-latest').hidden &&
+            document.querySelector('#pipeline-latest-title').textContent==='最新 CI' &&
+            document.querySelector('#pipeline-progress-context').textContent.includes('feature/recent') &&
+            document.querySelector('#pipeline-progress-context').textContent.includes('fedcba9') &&
+            !document.querySelector('#pipeline-progress-context').textContent.includes('0123456') &&
+            !!document.querySelector('#pipeline-ci-progress [data-state="in_progress"]') &&
+            !!document.querySelector('#pipeline-vercel-progress [data-state="building"]') &&
+            window.officeLatestPipeline.releases[0].records[0].commit==='\(PipelineFixture.recentSHA)'
+            """)
+        guard await fixture.releaseRequests.last == pairedPath else {
+            throw Failure("Selecting historical jobs must keep Vercel paired with the latest trigger")
+        }
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-follow-latest').click()")
+        try await expect("Following latest clears the manual pin and returns to the latest trigger", panel, view, """
+            document.querySelector('#pipeline-jobs').textContent.includes('Run tests <script>') &&
+            document.querySelector('#pipeline-run').value==='7' &&
+            document.querySelector('#pipeline-follow-latest').hidden &&
+            window.officeLatestPipeline.releases[0].records[0].commit==='\(PipelineFixture.recentSHA)'
+            """)
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-auth').click()")
+        try await expect("Existing gh is used only after the explicit choice", panel, view,
+                         "document.querySelector('#pipeline-jobs').textContent.includes('Private tests')")
+        guard await fixture.requests.suffix(2).allSatisfy({ $0 }) else { throw Failure("CI did not use the selected auth mode") }
+        var saved = try OfficeSettings(url: settings).load()
+        guard saved["pipeline_repository"] as? String == "example/ci-fixture",
+              saved["pipeline_gh_repositories"] as? [String] == ["example/ci-fixture"] else {
+            throw Failure("The selected repository and its explicit gh choice were not saved")
+        }
+        let requestsBeforeReopening = await fixture.requests.count
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#show-usage').click();
+            document.querySelector('#show-pipeline').click();
+            """)
+        try await expect("Reopening Actions preserves the repository's existing gh choice", panel, view, """
+            document.querySelector('#pipeline-repository').value==='example/ci-fixture' &&
+            !document.querySelector('#pipeline-repository').disabled &&
+            !document.querySelector('#pipeline-progress').hidden &&
+            !document.querySelector('#pipeline-refresh').disabled &&
+            document.querySelector('#pipeline-source').textContent.includes('通过本机 gh') &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Private tests') &&
+            document.querySelector('#pipeline-progress-context').textContent.includes('fedcba9')
+            """)
+        let reopenedRequests = await fixture.requests
+        guard reopenedRequests.count > requestsBeforeReopening,
+              reopenedRequests.dropFirst(requestsBeforeReopening).allSatisfy({ $0 }) else {
+            throw Failure("Reopening CI did not issue the remembered authenticated queries")
+        }
+        let requestsBeforeOtherRepository = await fixture.requests.count
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const picker = document.querySelector('#pipeline-repository');
+                picker.value = 'example/another-fixture';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("Existing gh authorization stays isolated to the chosen repository", panel, view, """
+            document.querySelector('#pipeline-repository').value==='example/another-fixture' &&
+            document.querySelector('#pipeline-source').textContent.includes('公开查询') &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Second repository tests')
+            """)
+        let otherRepositoryRequests = await fixture.requests
+        guard otherRepositoryRequests.count > requestsBeforeOtherRepository,
+              otherRepositoryRequests.dropFirst(requestsBeforeOtherRepository).allSatisfy({ !$0 }) else {
+            throw Failure("A repository without an explicit gh choice used authenticated queries")
+        }
+        saved = try OfficeSettings(url: settings).load()
+        guard saved["pipeline_repository"] as? String == "example/another-fixture",
+              saved["pipeline_gh_repositories"] as? [String] == ["example/ci-fixture"] else {
+            throw Failure("Switching repositories overwrote the remembered gh choice")
+        }
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const picker = document.querySelector('#pipeline-repository');
+                picker.value = 'example/ci-fixture';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("Returning to a repository restores its saved gh choice and latest CI", panel, view, """
+            document.querySelector('#pipeline-source').textContent.includes('通过本机 gh') &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Private tests') &&
+            document.querySelector('#pipeline-run').value==='7' &&
+            document.querySelector('#pipeline-progress-context').textContent.includes('fedcba9')
+            """)
+        guard await fixture.requests.suffix(2).allSatisfy({ $0 }) else {
+            throw Failure("Returning to the repository lost its authenticated query mode")
+        }
+        let restarted = OfficeApplication(
+            sceneURL: resources.appendingPathComponent("office.html"), codexHome: home.path,
+            configFile: settings.path,
+            pipeline: OfficePipeline(fetch: { try await fixture.fetch($0, useCLI: $1) },
+                                     deploymentProviders: [OfficeVercelDeployments(fetch: { try await fixture.fetchVercel($0) })])
+        )
+        let (restartedPanel, restartedView) = restarted.loadOffscreenPanel()
+        do {
+            try await expect("The restarted CI fixture has initialized", restartedPanel, restartedView,
+                             "typeof window.officeSetSnapshot==='function'")
+            await restarted.refreshOffscreenActivity()
+            _ = try await restartedView.evaluateJavaScript("""
+                window.officeSetVisible(true);
+                document.querySelector('#show-pipeline').click();
+                """)
+            try await expect("An application restart restores the repository, gh choice, and latest CI", restartedPanel, restartedView, """
+                document.querySelector('#pipeline-repository').value==='example/ci-fixture' &&
+                document.querySelector('#pipeline-source').textContent.includes('通过本机 gh') &&
+                document.querySelector('#pipeline-jobs').textContent.includes('Private tests') &&
+                document.querySelector('#pipeline-run').value==='7' &&
+                document.querySelector('#pipeline-latest-title').textContent==='最新 CI' &&
+                document.querySelector('#pipeline-progress-context').textContent.includes('fedcba9') &&
+                !document.querySelector('#pipeline-history').open
+                """)
+            guard await fixture.requests.suffix(2).allSatisfy({ $0 }) else {
+                throw Failure("The restarted application forgot the saved gh choice")
+            }
+        } catch {
+            restarted.stopOffscreenPanel()
+            throw error
+        }
+        restarted.stopOffscreenPanel()
+        await fixture.setOffline(true)
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-refresh').click()")
+        try await expect("An Actions read failure preserves its last known state", panel, view, """
+            document.querySelector('#pipeline-actions-note').textContent.includes('上次读取') &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Private tests')
+            """)
+        guard await fixture.releaseRequests.allSatisfy({ $0.contains("&sha=") }),
+              await fixture.actionPaths.allSatisfy({ !$0.contains("head_sha=") }) else {
+            throw Failure("Actions must pair recent repository runs by SHA without reading unfiltered deployment history")
+        }
+        await fixture.setOffline(false)
+        let actionsBeforeReleases = await fixture.requests.count
+        let pairedBeforeHistory = await fixture.releaseRequests.count
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-show-releases').click()")
+        try await expect("Releases offers its own project-chat selector", panel, view, """
+            document.querySelector('#pipeline-show-releases').getAttribute('aria-pressed')==='true' &&
+            !document.querySelector('#pipeline-workspace').parentElement.closest('[hidden]') &&
+            !!document.querySelector('#pipeline-repository').parentElement.closest('[hidden]') &&
+            document.querySelector('#pipeline-workspace').value==='' &&
+            !!document.querySelector('#pipeline-workspace option[value="\(id)"]')
+            """)
+        guard await fixture.requests.count == actionsBeforeReleases,
+              await fixture.releaseRequests.count == pairedBeforeHistory else {
+            throw Failure("Opening unselected releases queried a provider")
+        }
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const picker = document.querySelector('#pipeline-workspace');
+                picker.value = '\(id)';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("The Releases source renders native Vercel results independently", panel, view, """
+            document.querySelectorAll('.pipeline-deployment').length===3 &&
+            document.querySelector('#pipeline-deployments').textContent.includes('构建中') &&
+            document.querySelector('#pipeline-deployments').textContent.includes('待正式发布') &&
+            document.querySelector('#pipeline-deployments').textContent.includes('BUILD_FAILED') &&
+            document.querySelectorAll('.pipeline-deployment button').length===1 &&
+            !('url' in window.officeLatestPipeline.releases[0].records[0]) &&
+            !!document.querySelector('#pipeline-actions').closest('[hidden]')
+            """)
+        guard await fixture.requests.count == actionsBeforeReleases,
+              await fixture.releaseRequests.count == pairedBeforeHistory + 1,
+              await fixture.releaseRequests.last == "/v7/deployments?projectId=prj_web&limit=10&teamId=team_fixture" else {
+            throw Failure("The Releases source must read unfiltered deployment history without querying Actions")
+        }
+        await fixture.setOffline(true)
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-refresh').click()")
+        try await expect("A release read failure preserves its own last known state", panel, view, """
+            document.querySelector('#pipeline-deployments').textContent.includes('上次读取') &&
+            document.querySelector('#pipeline-deployments').textContent.includes('BUILD_FAILED')
+            """)
+        await fixture.setOffline(false)
+        try "[remote \"origin\"]\n\turl = git@gitlab.com:example/ci-fixture.git\n"
+            .write(to: config, atomically: true, encoding: .utf8)
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-refresh').click()")
+        try await expect("Vercel remains usable without a GitHub origin", panel, view, """
+            document.querySelector('#pipeline-deployments').textContent.includes('构建中') &&
+            !document.querySelector('#pipeline-deployments').textContent.includes('上次读取')
+            """)
+        guard await fixture.requests.count == actionsBeforeReleases else { throw Failure("Releases queried GitHub Actions") }
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#show-usage').click();
+            document.querySelector('#pipeline-refresh').click();
+            """)
+        try await expect("Switching to Usage hides the pipeline page", panel, view, """
+            document.querySelector('#pipeline-panel').hidden && !document.querySelector('#usage-panel').hidden
+            """)
+        let lastRelease = await fixture.releaseRequests.count
+        _ = try await view.evaluateJavaScript("document.querySelector('#show-pipeline').click()")
+        try await expect("Reopening the pipeline page restores its release source and selected project", panel, view, """
+            document.querySelector('#pipeline-show-releases').getAttribute('aria-pressed')==='true' &&
+            document.querySelector('#pipeline-workspace').value==='\(id)' &&
+            document.querySelector('#pipeline-deployments').textContent.includes('构建中')
+            """)
+        guard await fixture.releaseRequests.count == lastRelease + 1,
+              await fixture.requests.count == actionsBeforeReleases else {
+            throw Failure("Reopening Releases should read its selected project once without querying Actions")
+        }
+        _ = try await view.evaluateJavaScript("document.querySelector('#show-office').click()")
+        try await expect("Returning to Office restores the desk and zoom controls", panel, view, """
+            document.querySelector('#pipeline-panel').hidden && !document.querySelector('#office-view').hidden &&
+            !document.querySelector('#office-zoom').hidden
+            """)
+        try FileManager.default.removeItem(at: binding)
+        let package = repository.appendingPathComponent("apps/site")
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        try """
+        {"orgId":"team_root","remoteName":"origin","projects":[
+          {"id":"prj_root","name":"root","directory":"."},
+          {"id":"prj_nested","name":"nested","directory":"apps/site","orgId":"team_nested"}
+        ]}
+        """.write(to: vercel.appendingPathComponent("repo.json"), atomically: true, encoding: .utf8)
+        let provider = OfficeVercelDeployments(fetch: { try await fixture.fetchVercel($0) })
+        let data = await provider.deployments(in: .init(directory: package, gitRoot: repository),
+                                              previous: nil, automatic: false)
+        guard data.project == "nested", data.error == nil,
+              await fixture.releaseRequests.last == "/v7/deployments?projectId=prj_nested&limit=10&teamId=team_nested",
+              OfficeVercelDeployments.supportsAPI("Vercel CLI 50.5.1"),
+              !OfficeVercelDeployments.supportsAPI("Vercel CLI 50.5.0") else { throw Failure("Vercel project or CLI resolution failed") }
+
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#show-pipeline').click();
+            document.querySelector('#pipeline-show-actions').click();
+            """)
+        try await expect("Actions reloads its GitHub repository choices", panel, view, """
+            !document.querySelector('#pipeline-repository').disabled &&
+            !!document.querySelector('#pipeline-repository option[value="example/another-fixture"]')
+            """)
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const picker = document.querySelector('#pipeline-repository');
+                picker.value = 'example/another-fixture';
+                picker.dispatchEvent(new Event('change'));
+            })();
+            """)
+        try await expect("An unlinked repository offers an explicit Vercel project association", panel, view, """
+            document.querySelector('#pipeline-repository').value==='example/another-fixture' &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Second repository tests') &&
+            !document.querySelector('#pipeline-vercel-link').closest('[hidden]') &&
+            !document.querySelector('#pipeline-vercel-link').disabled
+            """)
+        let beforeAssociation = await fixture.releaseRequests.count
+        _ = try await view.evaluateJavaScript("document.querySelector('#pipeline-vercel-link').click()")
+        try await expect("The Vercel association form opens for the selected repository", panel, view, """
+            !document.querySelector('#pipeline-vercel-project-form').closest('[hidden]') &&
+            !!document.querySelector('#pipeline-vercel-project-id') &&
+            !!document.querySelector('#pipeline-vercel-team-id') &&
+            !!document.querySelector('#pipeline-vercel-project-save')
+            """)
+        _ = try await view.evaluateJavaScript("""
+            document.querySelector('#pipeline-vercel-project-id').value='prj_manual';
+            document.querySelector('#pipeline-vercel-team-id').value='team_manual';
+            document.querySelector('#pipeline-vercel-project-save').click();
+            """)
+        let fallbackExpectation = """
+            document.querySelector('#pipeline-repository').value==='example/another-fixture' &&
+            document.querySelector('#pipeline-jobs').textContent.includes('Second repository tests') &&
+            document.querySelector('#pipeline-vercel-progress').textContent.includes('最近一次前端部署') &&
+            document.querySelector('#pipeline-vercel-progress').textContent.includes('abcdef0') &&
+            !!document.querySelector('#pipeline-vercel-progress [data-state="ready"]') &&
+            document.querySelector('#pipeline-progress-context').textContent.includes('fedcba9') &&
+            !document.querySelector('#pipeline-progress-context').textContent.includes('abcdef0') &&
+            window.officeLatestPipeline.releases[0].isLatestFallback===true &&
+            window.officeLatestPipeline.releases[0].records.length===1 &&
+            window.officeLatestPipeline.releases[0].records[0].commit==='\(PipelineFixture.frontendSHA)'
+            """
+        try await expect("A missing same-SHA deployment shows the latest frontend deployment with its own SHA", panel, view,
+                         fallbackExpectation)
+        let manualPaths = [
+            "/v7/deployments?projectId=prj_manual&limit=10&teamId=team_manual&sha=\(PipelineFixture.recentSHA)",
+            "/v7/deployments?projectId=prj_manual&limit=1&teamId=team_manual",
+        ]
+        guard await Array(fixture.releaseRequests.dropFirst(beforeAssociation)) == manualPaths else {
+            throw Failure("A mapped repository must try its full SHA before one project- and team-scoped latest deployment")
+        }
+        saved = try OfficeSettings(url: settings).load()
+        guard let mappings = saved["pipeline_vercel_projects"] as? [String: [String: String]],
+              mappings["example/another-fixture"]?["projectId"] == "prj_manual",
+              mappings["example/another-fixture"]?["orgId"] == "team_manual",
+              mappings["example/ci-fixture"] == nil else {
+            throw Failure("The explicit Vercel association was not persisted under only the selected repository")
+        }
+        let associated = OfficeApplication(
+            sceneURL: resources.appendingPathComponent("office.html"), codexHome: home.path,
+            configFile: settings.path,
+            pipeline: OfficePipeline(fetch: { try await fixture.fetch($0, useCLI: $1) },
+                                     deploymentProviders: [OfficeVercelDeployments(fetch: { try await fixture.fetchVercel($0) })])
+        )
+        let (associatedPanel, associatedView) = associated.loadOffscreenPanel()
+        defer { associated.stopOffscreenPanel() }
+        try await expect("The associated fixture has initialized", associatedPanel, associatedView,
+                         "typeof window.officeSetSnapshot==='function'")
+        await associated.refreshOffscreenActivity()
+        let beforeAssociatedRestart = await fixture.releaseRequests.count
+        _ = try await associatedView.evaluateJavaScript("""
+            window.officeOriginalReceivePipeline = window.officeReceivePipeline;
+            window.officeReceivePipeline = (data, request) => {
+                window.officeLatestPipeline = data;
+                window.officeOriginalReceivePipeline(data, request);
+            };
+            window.officeSetVisible(true);
+            document.querySelector('#show-pipeline').click();
+            """)
+        try await expect("An application restart reuses the saved per-repository Vercel association", associatedPanel,
+                         associatedView, fallbackExpectation)
+        guard await Array(fixture.releaseRequests.dropFirst(beforeAssociatedRestart)) == manualPaths else {
+            throw Failure("Restarting did not reuse the saved project and team for the same-SHA and latest fallback queries")
+        }
+    }
+
+    @MainActor
+    private static func checkRobotSkin(resources: URL, home: URL, workspace: URL) async throws {
+        let folder = workspace.appendingPathComponent("skin-settings", isDirectory: true)
+        let config = folder.appendingPathComponent("office.json")
+        let stored = folder.appendingPathComponent("robot-skins.plist")
+        let legacy = folder.appendingPathComponent("robot-skin.png")
+        let storage = OfficeRobotSkin(file: stored)
+        let source = workspace.appendingPathComponent("selected.gif")
+        let second = workspace.appendingPathComponent("second.png")
+        let invalid = workspace.appendingPathComponent("invalid.png")
+        let png = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAYAAAC9vt6cAAAAG0lEQVR4nGNgQAL/Gf7/JwYz4AKjBowaQK4BAEYVKuSmpMwXAAAAAElFTkSuQmCC"
+        )!
+        let gif = Data(base64Encoded: """
+            R0lGODlhEAAKAIAAAP8A/wD//yH/C05FVFNDQVBFMi4wAwEAAAAh+QQEGAAAACwAAAAAEAAKAAAC
+            eQRBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARB
+            EARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARBEARB
+            EARBEARBEAUAIfkEBBgAAAAsAAAAABAACgAAAnkMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAM
+            wzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAM
+            wzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAMwzAFADs=
+            """, options: .ignoreUnknownCharacters)!
+        let greenPNG = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAQCAYAAAAvf+5AAAAAFklEQVR4nGNggIH/OCAGGFU4qpBmCgG7PL9B6sK++wAAAABJRU5ErkJggg=="
+        )!
+        try gif.write(to: source)
+        try greenPNG.write(to: second)
+        try Data("invalid image".utf8).write(to: invalid)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try png.write(to: legacy)
+        guard storage.load() == [png] else { throw Failure("The single-image skin was not recognized") }
+        try FileManager.default.removeItem(at: legacy)
+        let scene = resources.appendingPathComponent("office.html")
+        let office = OfficeApplication(sceneURL: scene, codexHome: home.path, configFile: config.path)
+        let (panel, view) = office.loadOffscreenPanel()
+        defer { office.stopOffscreenPanel() }
+        let available = "!document.querySelector('#choose-robot-skin').disabled"
+        try await expect("The default skin is ready", panel, view,
+                         "\(available) && document.querySelector('#reset-robot-skin').hidden && document.querySelector('#robot-skin-desks').hidden")
+        try await expect("The office still uses WebGL when the environment supports it", panel, view, """
+            !document.querySelector('#webgl').hidden || !document.createElement('canvas').getContext('webgl2')
+            """)
+        try button(.settings, in: panel).performClick(nil)
+        try await expect("Robot skin can be chosen in settings", panel, view,
+                         "document.querySelector('#office-settings').open")
+
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const now = new Date().toISOString();
+                window.skinFixture = {source_status:'ok',collected_at:now,projects:[],threads:[
+                    {id:'skin-root',root_id:'skin-root',title:'Skin test',status:'running',last_activity:now},
+                    {id:'skin-child',root_id:'skin-root',parent_id:'skin-root',status:'running',last_activity:now}
+                ]};
+                window.officeSetSnapshot(window.skinFixture,null,{});
+                window.officeSetVisible(true);
+                window.sceneSkinImages = () => [...document.querySelectorAll('.robot-skins img')];
+            })()
+            """)
+        let choose = "document.querySelector('#choose-robot-skin').click()"
+        office.offscreenRobotSkinPicker = { folder in folder ? [] : [source, second] }
+        _ = try await view.evaluateJavaScript(choose)
+        try await expect("The original animated GIF and PNG load on separate robots", panel, view, """
+            document.querySelector('#robot-skin-preview img')?.naturalWidth===16 &&
+            document.querySelector('#robot-skin-count').textContent==='当前 2 张图片' &&
+            document.querySelector('#robot-skin-status').textContent==='已应用机器人皮肤组。' &&
+            window.sceneSkinImages().length===2 &&
+            new Set(window.sceneSkinImages().map(image => image.src)).size===2 &&
+            window.sceneSkinImages().every(image => image.complete && image.naturalWidth>0) &&
+            document.querySelector('#robot-skin-preview img').src.startsWith(matchMedia('(prefers-reduced-motion: reduce)').matches
+                ? 'data:image/png;base64,' : 'data:image/gif;base64,')
+            """)
+        let copy = storage.load()
+        guard copy.count == 2, copy.first == gif, OfficeRobotSkin.stillFrame(gif) != nil,
+              !FileManager.default.fileExists(atPath: config.path) else {
+            throw Failure("The robot skin set did not preserve the original GIF and its still frame")
+        }
+        try FileManager.default.removeItem(at: source)
+        try FileManager.default.removeItem(at: second)
+        _ = try await view.evaluateJavaScript("document.querySelector('#close-settings').click()")
+        try await expect("Skin images are layered in front of the desk canvas", panel, view, """
+            (() => {
+                const canvas = document.querySelector('.stage canvas:not([hidden])');
+                const image = document.querySelector('.robot-skins [data-robot-id=skin-root]');
+                const bounds = image.getBoundingClientRect();
+                const transparentToClicks = getComputedStyle(image).pointerEvents==='none';
+                image.style.pointerEvents = 'auto';
+                const stack = document.elementsFromPoint(bounds.x+bounds.width/2,bounds.y+bounds.height/2);
+                image.style.pointerEvents = '';
+                return transparentToClicks && stack.includes(image) && stack.indexOf(canvas)>stack.indexOf(image) &&
+                    !!document.querySelector('.chat-marker[data-thread-id=skin-root]');
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.initialSkinImages = new Map(window.sceneSkinImages().map(image => [image.dataset.robotId,[image,image.src]]));
+            const canvas = document.querySelector('#webgl');
+            if (!canvas.hidden) canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));
+            """)
+        try button(.settings, in: panel).performClick(nil)
+        try await expect("Custom skins offer the saved desk toggle", panel, view, """
+            document.querySelector('#office-settings').open &&
+            !document.querySelector('#robot-skin-desks').hidden &&
+            !!document.querySelector('[name=show_skin_desks]:checked:enabled')
+            """)
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                const canvas = document.querySelector('#fallback');
+                window.deskSamples = () => window.sceneSkinImages().map(image => {
+                    const frame = canvas.getBoundingClientRect();
+                    const avatar = image.getBoundingClientRect();
+                    const ratio = canvas.width/frame.width;
+                    const left = Math.max(0,Math.round((avatar.left-frame.left)*ratio));
+                    const top = Math.max(0,Math.round((avatar.top+avatar.height/2-frame.top)*ratio));
+                    const width = Math.min(canvas.width-left,Math.ceil((avatar.width+12)*ratio));
+                    const height = Math.min(canvas.height-top,Math.ceil(42*ratio));
+                    return canvas.getContext('2d').getImageData(left,top,width,height).data.join(',');
+                });
+                window.samplesWithDesks = window.deskSamples();
+                window.skinLink = document.querySelector('.agent-link[data-agent=skin-child]');
+                window.deskLinkPoint = [window.skinLink.style.left,window.skinLink.style.top].join(',');
+                document.querySelector('[name=show_skin_desks]').click();
+            })()
+            """)
+        try await expect("Both desks disappear and the existing animated link attaches to the skins", panel, view, """
+            (() => {
+                const link = document.querySelector('.agent-link[data-agent=skin-child]');
+                if (link!==window.skinLink || link.dataset.owner!=='skin-root' || link.dataset.status!=='running') return false;
+                const stage = document.querySelector('.stage').getBoundingClientRect();
+                const x = stage.left+parseFloat(link.style.left), y = stage.top+parseFloat(link.style.top);
+                const angle = parseFloat(link.style.transform.slice(7)), length = parseFloat(link.style.width);
+                const atSkin = (id,px,py) => {
+                    const r = document.querySelector('.robot-skins [data-robot-id='+id+']').getBoundingClientRect();
+                    return px>=r.left-2 && px<=r.right+2 && py>=r.top-2 && py<=r.bottom+2;
+                };
+                return document.querySelector('#settings-feedback').textContent==='已保存' &&
+                    window.deskSamples().every((sample,index) => sample!==window.samplesWithDesks[index]) &&
+                    [link.style.left,link.style.top].join(',')!==window.deskLinkPoint &&
+                    atSkin('skin-root',x,y) &&
+                    atSkin('skin-child',x+length*Math.cos(angle),y+length*Math.sin(angle)) &&
+                    (matchMedia('(prefers-reduced-motion: reduce)').matches ||
+                        getComputedStyle(link,'::after').animationName==='agent-signal');
+            })()
+            """)
+        guard try OfficeSettings(url: config).load()["show_skin_desks"] as? Bool == false else {
+            throw Failure("The hidden desk preference was not saved")
+        }
+        _ = try await view.evaluateJavaScript("""
+            window.officeSetSnapshot({...window.skinFixture, collected_at:new Date(Date.now()+1000).toISOString(),
+                threads:window.skinFixture.threads.map(thread => ({...thread,status:'waiting'}))},null,{});
+            """)
+        try await expect("The same robots keep their assigned skins when their status changes", panel, view, """
+            !document.querySelector('#fallback').hidden && window.sceneSkinImages().length===2 &&
+            window.skinLink.dataset.status==='waiting' &&
+            window.sceneSkinImages().every(image => {
+                const [previous,source] = window.initialSkinImages.get(image.dataset.robotId);
+                return previous===image && source===image.src;
+            })
+            """)
+        office.offscreenRobotSkinPicker = { _ in [invalid] }
+        _ = try await view.evaluateJavaScript(choose)
+        try await expect("An invalid selection preserves the previous skin", panel, view, """
+            document.querySelector('#robot-skin-status').hasAttribute('data-error') &&
+            document.querySelector('#robot-skin-preview img')?.naturalWidth===16
+            """)
+        guard storage.load() == copy else { throw Failure("An invalid image changed the stored skin set") }
+        office.offscreenRobotSkinPicker = { _ in [] }
+        _ = try await view.evaluateJavaScript(choose)
+        try await expect("Cancel preserves the previous skin", panel, view, """
+            \(available) && document.querySelector('#robot-skin-status').hidden &&
+            document.querySelector('#robot-skin-preview img')?.naturalWidth===16
+            """)
+
+        let collection = workspace.appendingPathComponent("skin-collection", isDirectory: true)
+        try FileManager.default.createDirectory(at: collection, withIntermediateDirectories: true)
+        for index in 0..<151 {
+            try gif.write(to: collection.appendingPathComponent("image-\(index).gif"))
+        }
+        try Data("invalid image".utf8).write(to: collection.appendingPathComponent("bad.png"))
+        try Data("notes".utf8).write(to: collection.appendingPathComponent("notes.txt"))
+        office.offscreenRobotSkinPicker = { folder in folder ? [collection] : [] }
+        _ = try await view.evaluateJavaScript("""
+            window.receivedSkinImages = new Set();
+            const receive = window.officeReceiveRobotSkinImage;
+            window.officeReceiveRobotSkinImage = (image,index,revision,still) => {
+                window.receivedSkinImages.add(index);
+                return receive(image,index,revision,still);
+            };
+            document.querySelector('#choose-robot-skin-folder').click();
+            """)
+        try await expect("A folder with 151 images loads only the preview and visible skins", panel, view, """
+            document.querySelector('#robot-skin-count').textContent==='当前 151 张图片' &&
+            document.querySelector('#robot-skin-status').textContent.includes('跳过了 1 张') &&
+            window.receivedSkinImages.size>=2 && window.receivedSkinImages.size<=3
+            """)
+        guard storage.load() == Array(repeating: gif,count: 151) else {
+            throw Failure("The complete set of 151 original GIFs was not saved")
+        }
+        try FileManager.default.removeItem(at: collection)
+        try greenPNG.write(to: legacy)
+        let restarted = OfficeApplication(sceneURL: scene, codexHome: home.path, configFile: config.path)
+        let (restartedPanel, restartedView) = restarted.loadOffscreenPanel()
+        defer { restarted.stopOffscreenPanel() }
+        try await expect("A fresh application loads the saved set ahead of the old single image", restartedPanel, restartedView, """
+            document.querySelector('#robot-skin-preview img')?.naturalHeight===10 &&
+            document.querySelector('#robot-skin-count').textContent==='当前 151 张图片'
+            """)
+        try button(.settings, in: restartedPanel).performClick(nil)
+        try await expect("The desk toggle stays off after restart", restartedPanel, restartedView, """
+            document.querySelector('#office-settings').open &&
+            !!document.querySelector('[name=show_skin_desks]:enabled:not(:checked)')
+            """)
+        _ = try await restartedView.evaluateJavaScript("document.querySelector('#reset-robot-skin').click()")
+        try await expect("Reset removes the custom skin", restartedPanel, restartedView, """
+            !document.querySelector('#robot-skin-preview img') &&
+            document.querySelector('#reset-robot-skin').hidden &&
+            document.querySelector('#robot-skin-desks').hidden &&
+            document.querySelector('#robot-skin-status').textContent==='已恢复默认机器人。'
+            """)
+        guard !FileManager.default.fileExists(atPath: stored.path), !FileManager.default.fileExists(atPath: legacy.path) else {
+            throw Failure("Reset did not remove both generations of local skin files")
+        }
     }
 
     @MainActor

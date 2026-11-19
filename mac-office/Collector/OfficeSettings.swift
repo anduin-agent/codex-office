@@ -23,6 +23,55 @@ enum OfficeLanguage: String, Sendable {
     }
 }
 
+enum OfficePipelinePreferenceChange: Sendable {
+    case repository(String?)
+    case authentication(repository: String, useCLI: Bool)
+    case vercelProject(repository: String, project: OfficeVercelProjectLink?)
+}
+
+struct OfficePipelinePreferences: Sendable, Equatable {
+    private(set) var repository: String?
+    private(set) var ghRepositories: Set<String>
+    private(set) var vercelProjects: [String: OfficeVercelProjectLink]
+
+    init(_ settings: OfficeJSON?) {
+        repository = settings?["pipeline_repository"] as? String
+        ghRepositories = Set(settings?["pipeline_gh_repositories"] as? [String] ?? [])
+        let projects = settings?["pipeline_vercel_projects"] as? [String: OfficeJSON] ?? [:]
+        vercelProjects = projects.compactMapValues(Self.vercelProject)
+    }
+
+    mutating func apply(_ change: OfficePipelinePreferenceChange) {
+        switch change {
+        case .repository(let repository):
+            self.repository = repository
+        case .authentication(let repository, let useCLI):
+            if useCLI { ghRepositories.insert(repository) }
+            else { ghRepositories.remove(repository) }
+        case .vercelProject(let repository, let project):
+            vercelProjects[repository] = project
+        }
+    }
+
+    var values: OfficeJSON {
+        let projects: [String: OfficeJSON] = vercelProjects.mapValues { project in
+            var value: OfficeJSON = ["projectId": project.projectId, "orgId": project.orgId]
+            value["projectName"] = project.projectName
+            return value
+        }
+        return ["pipeline_repository": repository as Any? ?? NSNull(), "pipeline_gh_repositories": ghRepositories.sorted(),
+                "pipeline_vercel_projects": projects]
+    }
+
+    static func vercelProject(_ value: OfficeJSON) -> OfficeVercelProjectLink? {
+        guard Set(value.keys).isSubset(of: ["projectId", "orgId", "projectName"]),
+              let projectId = value["projectId"] as? String, let orgId = value["orgId"] as? String,
+              value["projectName"] == nil || officeValidText(value["projectName"], limit: 160) else { return nil }
+        let project = OfficeVercelProjectLink(projectId: projectId, orgId: orgId, projectName: value["projectName"] as? String)
+        return project.valid ? project : nil
+    }
+}
+
 struct OfficeSettings: Sendable {
     struct InvalidSettings: LocalizedError {
         let chinese: String
@@ -42,8 +91,9 @@ struct OfficeSettings: Sendable {
     static let officeZoomRange = 60...160
     static let editableKeys: Set<String> = [
         "projects", "thread_projects", "coordination_section", "menu_bar_metric", "visible_sections", "language", "live_quota",
-        "office_zoom"
+        "office_zoom", "show_skin_desks"
     ]
+    private static let storedKeys = editableKeys.union(["pipeline_repository", "pipeline_gh_repositories", "pipeline_vercel_projects"])
 
     static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -61,7 +111,8 @@ struct OfficeSettings: Sendable {
         [
             "projects": OfficeJSON(), "thread_projects": OfficeJSON(),
             "coordination_section": NSNull(), "menu_bar_metric": "token_speed", "visible_sections": NSNull(),
-            "language": OfficeLanguage.simplifiedChinese.rawValue, "live_quota": defaultLiveQuota, "office_zoom": 100
+            "language": OfficeLanguage.simplifiedChinese.rawValue, "live_quota": defaultLiveQuota, "office_zoom": 100,
+            "show_skin_desks": true
         ]
     }
 
@@ -72,7 +123,7 @@ struct OfficeSettings: Sendable {
         } catch let error as POSIXError where error.code == .ENOENT {
             return Self.defaults()
         }
-        guard let document = raw as? OfficeJSON, Set(document.keys).isSubset(of: Self.editableKeys) else {
+        guard let document = raw as? OfficeJSON, Set(document.keys).isSubset(of: Self.storedKeys) else {
             throw InvalidSettings("办公室设置字段无效。", "The office settings contain unsupported fields.")
         }
         return try Self.validate(Self.defaults().merging(document) { _, new in new })
@@ -89,11 +140,21 @@ struct OfficeSettings: Sendable {
         }
     }
 
+    func updatePipelinePreference(_ change: OfficePipelinePreferenceChange) throws {
+        try withLock {
+            let document = try load()
+            var preferences = OfficePipelinePreferences(document)
+            preferences.apply(change)
+            let updated = document.merging(preferences.values) { _, new in new }
+            try write(Self.validate(updated))
+        }
+    }
+
     func importFrom(_ source: URL) throws {
         guard let document = try Self.readJSON(source) as? OfficeJSON else {
             throw InvalidSettings("此文件不包含办公室设置。", "This file does not contain office settings.")
         }
-        let imported = document.filter { Self.editableKeys.contains($0.key) }
+        let imported = document.filter { Self.storedKeys.contains($0.key) }
         guard !imported.isEmpty else {
             throw InvalidSettings("此文件不包含办公室设置。", "This file does not contain office settings.")
         }
@@ -151,6 +212,24 @@ struct OfficeSettings: Sendable {
         else { throw InvalidSettings("实时额度设置无效。", "Invalid live quota setting.") }
         guard let zoom = document["office_zoom"] as? Int, Self.officeZoomRange.contains(zoom)
         else { throw InvalidSettings("办公室缩放比例无效。", "Invalid office zoom.") }
+        guard let showSkinDesks = document["show_skin_desks"] as? NSNumber,
+              CFGetTypeID(showSkinDesks) == CFBooleanGetTypeID()
+        else { throw InvalidSettings("皮肤的工位桌子设置无效。", "Invalid desk visibility for custom skins.") }
+        func validRepository(_ name: String) -> Bool {
+            OfficePipeline.repositoryName(name) == name && name == name.lowercased()
+        }
+        let cliRepositories = document["pipeline_gh_repositories"]
+        let repository = document["pipeline_repository"]
+        guard cliRepositories == nil || (cliRepositories as? [String])?.allSatisfy(validRepository) == true,
+              repository == nil || repository is NSNull || (repository as? String).map(validRepository) == true else {
+            throw InvalidSettings("CI 仓库偏好无效。", "Invalid CI repository preferences.")
+        }
+        if let rawProjects = document["pipeline_vercel_projects"] {
+            guard let projects = rawProjects as? [String: OfficeJSON],
+                  projects.allSatisfy({ validRepository($0.key) && OfficePipelinePreferences.vercelProject($0.value) != nil }) else {
+                throw InvalidSettings("Vercel 项目关联无效。", "Invalid Vercel project association.")
+            }
+        }
         if !(document["visible_sections"] is NSNull) {
             guard let sections = document["visible_sections"] as? [Any], sections.count <= 512 else {
                 throw InvalidSettings("显示分区列表无效。", "The list of visible sections is invalid.")

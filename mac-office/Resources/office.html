@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src data:">
   <link rel="stylesheet" href="office-dropdown.css">
   <title>Codex Office</title>
   <script>
@@ -110,9 +110,11 @@
       background: radial-gradient(ellipse at 50% 49%, color-mix(in srgb, var(--aura) var(--aura-strength), transparent), transparent 71%);
     }
     .native-toolbar .stage { --aura-strength: 38%; }
-    canvas, .annotations, .packets, .agent-links, .idle-floors, .floor-focus { position: absolute; inset: 0; width: 100%; height: 100%; }
+    canvas, .annotations, .packets, .agent-links, .idle-floors, .floor-focus, .robot-skins { position: absolute; inset: 0; width: 100%; height: 100%; }
     .stage canvas { position: sticky; inset: 0 auto auto 0; display: block; }
-    .annotations, .packets, .agent-links, .idle-floors, .floor-focus { pointer-events: none; }
+    .annotations, .packets, .agent-links, .idle-floors, .floor-focus, .robot-skins { pointer-events: none; }
+    .robot-skins { z-index: 0; overflow: hidden; }
+    .robot-skins img { position: absolute; transform: translate(-50%, -50%); }
     .floor-focus { background: var(--accent); opacity: .13; }
     .marker {
       position: absolute; margin: 0; padding: 3px 5px; white-space: nowrap;
@@ -236,6 +238,42 @@
     .dialog-title, .dialog-actions, .receipt-row { display: flex; align-items: center; gap: 8px; }
     .dialog-title { justify-content: space-between; margin-bottom: 12px; }
     .dialog-title h1 { margin: 0; font-size: 15px; }
+    #pipeline-panel { overflow-wrap: anywhere; }
+    #pipeline-panel label { display: block; margin: 0 0 4px; color: var(--muted); font-size: 11px; }
+    #pipeline-panel select { display: block; width: 100%; }
+    #pipeline-revision { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .pipeline-workspace { margin-bottom: 8px; }
+    .pipeline-sources { padding: 0 0 10px; border: 0; }
+    .pipeline-progress-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .pipeline-progress-grid > section { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+    #pipeline-latest-title { margin: 8px 0 0; font-size: 14px; }
+    .pipeline-progress-grid h3 { margin: 0 0 5px; font-size: 12px; }
+    #pipeline-history { margin-top: 12px; }
+    #pipeline-history summary { cursor: pointer; font-weight: 650; }
+    #pipeline-history[open] summary { margin-bottom: 8px; }
+    #pipeline-progress-context { padding: 2px 0 5px; }
+    #pipeline-vercel-project-form { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+    .pipeline-project-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .pipeline-project-fields input { width: 100%; padding: 5px; }
+    .pipeline-project-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+    @media (max-width: 400px) { .pipeline-progress-grid { grid-template-columns: 1fr; } }
+    .pipeline-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .pipeline-tools p { flex: 1 1 140px; margin: 0; }
+    .pipeline-heading { font-size: 12px; margin: 12px 0 6px; }
+    .pipeline-release + .pipeline-release { margin-top: 10px; }
+    .pipeline-release h3 { font-size: 12px; margin: 5px 0; }
+    .pipeline-deployment { border-bottom: 1px solid var(--line); padding: 7px 0; }
+    .pipeline-deployment > :first-child { flex: 1; min-width: 0; }
+    .pipeline-deployment code { color: var(--muted); font-size: 11px; }
+    .pipeline-list { margin: 0; padding: 0; list-style: none; }
+    .pipeline-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 4px 0; }
+    .pipeline-row > :last-child { flex-shrink: 0; }
+    .pipeline-steps { padding-inline-start: 14px; color: var(--muted); font-size: 11px; }
+    .pipeline-time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .pipeline-status { color: var(--muted); font-size: 11px; }
+    .pipeline-status[data-state="success"], .pipeline-status[data-state="ready"] { color: var(--accent); }
+    .pipeline-status[data-state="pending"], .pipeline-status[data-state="in_progress"], .pipeline-status[data-state="building"],
+    .pipeline-status[data-state="failure"], .pipeline-status[data-state="error"] { color: var(--amber); }
     .dialog-actions { margin-top: 12px; justify-content: flex-end; }
     dialog label[for], .dialog-label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 11px; }
     dialog select { display: block; width: 100%; }
@@ -299,9 +337,12 @@
     .app-settings-row button { margin-inline-start: auto; }
     #office-version { font-variant-numeric: tabular-nums; }
     #office-settings .login-item-choice { display: inline-flex; align-items: center; gap: 6px; }
+    .skin-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    #robot-skin-preview img { display: block; width: 36px; height: 36px; object-fit: contain; }
+    #robot-skin-status[data-error] { color: var(--amber); }
     .login-item-choice input { accent-color: var(--accent); }
     #office-view { display: contents; }
-    #usage-panel { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; background: var(--panel); }
+    #usage-panel, #pipeline-panel { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; background: var(--panel); }
     #usage-panel h2, #usage-panel h3 { margin: 0; font-size: 12px; }
     .usage-live {
       display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 14px;
@@ -463,6 +504,7 @@
   <div class="view-tabs" role="group" aria-label="面板视图">
     <button id="show-office" type="button" aria-controls="office-view" aria-pressed="true">办公室</button>
     <button id="show-usage" type="button" aria-controls="usage-panel" aria-pressed="false">用量</button>
+    <button id="show-pipeline" type="button" aria-controls="pipeline-panel" aria-pressed="false">CI / 部署</button>
     <div id="office-zoom" class="office-zoom" role="group" aria-label="办公室缩放">
       <button id="office-zoom-out" class="icon-button" type="button" aria-label="缩小办公室" title="缩小办公室">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
@@ -490,6 +532,7 @@
     <canvas id="fallback" aria-hidden="true" hidden></canvas>
     <div class="floor-focus" aria-hidden="true" hidden></div>
     <div class="agent-links" aria-hidden="true"></div>
+    <div class="robot-skins" aria-hidden="true"></div>
     <div class="packets" aria-hidden="true"></div>
     <div class="idle-floors" aria-hidden="true"></div>
     <div class="annotations"></div>
@@ -512,6 +555,85 @@
   </footer>
   </div>
   <div id="chat-title-tooltip" aria-hidden="true" hidden></div>
+  <main id="pipeline-panel" aria-label="CI / 部署" hidden>
+    <div class="view-tabs pipeline-sources" role="group" aria-label="CI 和发布视图">
+      <button id="pipeline-show-actions" type="button" aria-pressed="true">GitHub Actions</button>
+      <button id="pipeline-show-releases" type="button" aria-pressed="false">发布记录</button>
+    </div>
+    <div id="pipeline-repository-picker" class="pipeline-workspace">
+      <label for="pipeline-repository">GitHub 仓库</label>
+      <select id="pipeline-repository"><option value=""></option></select>
+    </div>
+    <div id="pipeline-workspace-picker" class="pipeline-workspace" hidden>
+      <label for="pipeline-workspace">项目聊天</label>
+      <select id="pipeline-workspace"></select>
+    </div>
+    <div id="pipeline-query-tools" class="pipeline-tools" hidden>
+      <p id="pipeline-revision"></p>
+      <button id="pipeline-vercel-link" type="button" aria-controls="pipeline-vercel-project-form" aria-expanded="false" hidden>关联 Vercel 项目</button>
+      <button id="pipeline-refresh" type="button">刷新</button>
+    </div>
+    <form id="pipeline-vercel-project-form" hidden>
+      <div class="pipeline-project-fields">
+        <div>
+          <label for="pipeline-vercel-project-id">Vercel 项目 ID</label>
+          <input id="pipeline-vercel-project-id" placeholder="prj_…" maxlength="124" required>
+        </div>
+        <div>
+          <label for="pipeline-vercel-team-id">Vercel 团队 ID（可选）</label>
+          <input id="pipeline-vercel-team-id" placeholder="team_…" maxlength="128">
+        </div>
+      </div>
+      <div class="pipeline-project-actions">
+        <button id="pipeline-vercel-project-remove" type="button" hidden>清除 Office 关联</button>
+        <button id="pipeline-vercel-project-cancel" type="button">取消</button>
+        <button id="pipeline-vercel-project-save" type="submit">保存关联</button>
+      </div>
+    </form>
+    <div id="pipeline-auth-tools" class="pipeline-tools" hidden>
+      <p id="pipeline-source" class="dialog-note"></p>
+      <button id="pipeline-auth" type="button" hidden></button>
+    </div>
+    <p id="pipeline-feedback" class="dialog-note" role="status"></p>
+    <p id="pipeline-preference-note" class="dialog-note" role="status" hidden></p>
+    <div id="pipeline-progress" hidden>
+      <h2 id="pipeline-latest-title">最新 CI</h2>
+      <p id="pipeline-progress-context" class="dialog-note"></p>
+      <div class="pipeline-progress-grid">
+        <section aria-labelledby="pipeline-ci-title">
+          <h3 id="pipeline-ci-title">GitHub Actions</h3>
+          <div id="pipeline-ci-progress"></div>
+        </section>
+        <section aria-labelledby="pipeline-vercel-title">
+          <h3 id="pipeline-vercel-title">Vercel</h3>
+          <div id="pipeline-vercel-progress"></div>
+        </section>
+      </div>
+    </div>
+    <section id="pipeline-actions" aria-label="GitHub Actions" hidden>
+      <p id="pipeline-actions-note" class="dialog-note" hidden></p>
+      <details id="pipeline-history" hidden>
+        <summary>运行历史和作业详情</summary>
+        <div id="pipeline-run-details" hidden>
+          <label for="pipeline-run">工作流运行</label>
+          <select id="pipeline-run"></select>
+          <div class="pipeline-row">
+            <span id="pipeline-run-state"></span>
+            <div>
+              <button id="pipeline-follow-latest" type="button" hidden>跟随最新运行</button>
+              <button id="pipeline-run-link" type="button">在 GitHub 查看</button>
+            </div>
+          </div>
+          <p id="pipeline-jobs-note" class="dialog-note" hidden></p>
+          <ul id="pipeline-jobs" class="pipeline-list"></ul>
+        </div>
+      </details>
+    </section>
+    <section id="pipeline-releases" aria-labelledby="pipeline-releases-title" hidden>
+      <h2 id="pipeline-releases-title" class="pipeline-heading">发布记录</h2>
+      <div id="pipeline-deployments"></div>
+    </section>
+  </main>
   <dialog id="collaboration-panel" aria-labelledby="collaboration-title">
     <div class="dialog-title">
       <div class="setting-heading">
@@ -568,6 +690,21 @@
             <button id="open-office-login-items" type="button" hidden>打开登录项设置</button>
           </div>
           <small id="office-login-status" role="status" hidden></small>
+        </div>
+        <div class="settings-choice app-settings" role="group" aria-labelledby="robot-skin-label">
+          <strong id="robot-skin-label">机器人皮肤</strong>
+          <div class="skin-controls">
+            <span id="robot-skin-preview" aria-hidden="true"></span>
+            <button id="choose-robot-skin" type="button" disabled>选择图片…</button>
+            <button id="choose-robot-skin-folder" type="button" disabled>导入文件夹…</button>
+            <button id="reset-robot-skin" type="button" hidden>恢复默认</button>
+          </div>
+          <small id="robot-skin-count" hidden></small>
+          <small>机器人出现时随机选一张，图片只保存在本机。</small>
+          <label id="robot-skin-desks" class="login-item-choice" hidden>
+            <input type="checkbox" name="show_skin_desks" disabled><span>显示工位桌子</span>
+          </label>
+          <small id="robot-skin-status" role="status" hidden></small>
         </div>
         <fieldset disabled>
           <div class="settings-choice">
@@ -741,6 +878,7 @@
   </div>
   <script src="office-i18n.js"></script>
   <script src="office-dropdown.js"></script>
+  <script src="office-pipeline.js"></script>
   <script>
 (() => {
   const i18n = window.officeI18n;
@@ -756,6 +894,14 @@
   const zoomReset = byId('office-zoom-reset');
   const canvas = byId('webgl');
   const fallback = byId('fallback');
+  let robotSkinRevision = -1;
+  let robotSkinCount = 0;
+  let showSkinDesks = window.officeInitialShowSkinDesks !== false;
+  let remainingRobotSkins = [];
+  const robotSkinImages = new Map();
+  const robotSkinAssignments = new Map();
+  const robotSkins = document.querySelector('.robot-skins');
+  const robotSkinNodes = new Map();
   const annotations = document.querySelector('.annotations');
   const floorFocus = document.querySelector('.floor-focus');
   const idleFloorLayer = document.querySelector('.idle-floors');
@@ -777,6 +923,7 @@
     syncIdleMotion();
   },{root:scene});
   const agentLinks = document.querySelector('.agent-links');
+  const agentLinkNodes = new Map();
   const packets = document.querySelector('.packets');
   const detail = byId('detail');
   const officeSections = byId('office-sections');
@@ -802,6 +949,7 @@
   const dark = matchMedia('(prefers-color-scheme: dark)');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const bridge = message => window.webkit?.messageHandlers?.office?.postMessage(message);
+  const pipeline = window.createOfficePipeline({bridge, t, language: () => i18n.language});
   const YAW = 18 * Math.PI / 180;
   const PITCH = 27 * Math.PI / 180;
   const COS_YAW = Math.cos(YAW), SIN_YAW = Math.sin(YAW);
@@ -1310,8 +1458,9 @@
   lounge.box(3.55,WORK+0.548,0.72,0.31,0.025,0.21,'paper',0.02);
   lounge.disk(3.93,WORK+0.58,0.73,0.089,0.13,'porcelain');
 
+  const hubRug = mesh();
+  hubRug.box(0,PROJECT+0.049,1.66,1.84,0.04,1.43,'rugViolet',0.17);
   const hub = mesh();
-  hub.box(0,PROJECT+0.049,1.66,1.84,0.04,1.43,'rugViolet',0.17);
   hub.disk(0,PROJECT+0.30,1.74,0.34,0.48,'lavender',1.22);
   hub.disk(0,PROJECT+0.57,1.74,0.60,0.10,'lavender',1.20);
   hub.disk(0,PROJECT+0.635,1.74,0.56,0.046,'rugViolet',1.20);
@@ -1983,7 +2132,12 @@
     return role.parent ? role.scale ?? 1 : layout.sectionMode && !role.atHub ? SECTION_DESK_SCALE : 1;
   }
 
+  function desksVisible() {
+    return robotSkinCount===0 || showSkinDesks;
+  }
+
   function updateGeometry() {
+    const withDesks = desksVisible();
     const helpers = new Map();
     if (layout.sectionMode) {
       for (const {parent,z,scale} of layout.agents) {
@@ -1992,7 +2146,7 @@
       }
     }
     const key = JSON.stringify([
-      layout.sectionMode,layout.hubY,layout.floors.map(({y,id}) => [y,id]),
+      withDesks,layout.sectionMode,layout.hubY,layout.floors.map(({y,id}) => [y,id]),
       layout.roles.map(role => [role.thread.id,role.x,role.y,role.z,role.width,role.style,role.atHub,role.thread.project_id]),
       [...helpers].map(([role,agents]) => [role.thread.id,agents]),
       layout.rooms,
@@ -2028,7 +2182,7 @@
       if (layout.sectionMode || role.y===WORK) {
         model.box(role.x,role.y+0.051,rugCenter,width,0.048,depth,rugs[role.style],0.14);
       }
-      desk(model,role.x,role.y,role.z,outfits[role.style],workstationScale(role));
+      if (withDesks) desk(model,role.x,role.y,role.z,outfits[role.style],workstationScale(role));
       if (layout.sectionMode && role.thread.project_id) {
         const highlight = mesh();
         highlight.box(role.x,role.y+0.055,rugCenter,width,0.048,depth,'editGlow',0.14);
@@ -2065,23 +2219,89 @@
     ];
   }
 
+  function loadRobotSkinImage(index) {
+    if (!robotSkinImages.has(index)) {
+      robotSkinImages.set(index,null);
+      bridge({action:'loadRobotSkinImage',index,revision:robotSkinRevision});
+    }
+    return robotSkinImages.get(index);
+  }
+
+  function robotSkinFor(id) {
+    if (!robotSkinCount) return null;
+    if (!robotSkinAssignments.has(id)) {
+      if (!remainingRobotSkins.length) {
+        remainingRobotSkins = Array.from({length:robotSkinCount},(_,index) => index);
+      }
+      const choice = Math.floor(Math.random()*remainingRobotSkins.length);
+      const index = remainingRobotSkins[choice];
+      remainingRobotSkins[choice] = remainingRobotSkins.at(-1);
+      remainingRobotSkins.pop();
+      robotSkinAssignments.set(id,index);
+    }
+    return loadRobotSkinImage(robotSkinAssignments.get(id));
+  }
+
+  function skinSource(skin) {
+    return reduced.matches ? skin.still : skin.source;
+  }
+
+  function robotSkinBox(role, lift, skin) {
+    const scale = workstationScale(role)*(role.parent ? AGENT_SIZE : 1);
+    const [x,y,depth] = project([role.x,role.y+(.74+.09*lift)*scale,role.z+.06*scale]);
+    const {width,height} = skin ?? {width:1,height:1};
+    const fit = 1.13*scale*view.scale/Math.max(width,height);
+    return {x,y,depth,width:width*fit,height:height*fit};
+  }
+
+  function drawRobotSkin(role, lift, skin) {
+    const id = role.thread.id;
+    let image = robotSkinNodes.get(id);
+    if (!image) {
+      image = new Image();
+      image.alt = '';
+      image.dataset.robotId = id;
+      robotSkinNodes.set(id,image);
+      robotSkins.append(image);
+    }
+    const source = skinSource(skin);
+    if (image.src!==source) image.src = source;
+    const {x,y,depth,width,height} = robotSkinBox(role,lift,skin);
+    image.style.left = x+'px';
+    image.style.top = y+'px';
+    image.style.width = width+'px';
+    image.style.height = height+'px';
+    image.style.zIndex = Math.round(depth*1000);
+  }
+
+  function clearRobotSkinNodes() {
+    robotSkins.replaceChildren();
+    robotSkinNodes.clear();
+    paintKey = '';
+  }
+
   function stopRobotMotion() {
     clearTimeout(robotTimer);
     robotTimer = 0;
   }
 
   function paint() {
-    if (!view || !state.visible || showingUsage || !geometry.office) return;
+    if (!view || !state.visible || activeView!=='office' || !geometry.office) return;
     const now = performance.now();
     const roles = layout.roles.filter(role => visibleAt(role.y));
     const agents = layout.agents.filter(role => visibleAt(role.y));
+    const skins = new Map();
+    for (const {thread} of [...roles,...agents]) {
+      const skin = robotSkinFor(thread.id);
+      if (skin) skins.set(thread.id,skin);
+    }
     const lifts = roles.map(role => {
       if (role.thread.status!=='waiting') return 0;
       const began = state.waitingSince.get(role.thread.id);
       return reduced.matches || began===undefined ? 1 : Math.min(1,(now-began)/WAIT_LIFT_MS);
     });
     const lifting = roles.some(({thread},index) => thread.status==='waiting' && lifts[index]<1);
-    const typing = !reduced.matches && [...roles,...agents].some(role => role.thread.status==='running');
+    const typing = !reduced.matches && [...roles,...agents].some(({thread}) => thread.status==='running' && !skins.has(thread.id));
     const interval = renderer ? 120 : 250;
     const frame = typing ? Math.floor(now/interval) : null;
     if ((typing || lifting) && !robotTimer) {
@@ -2099,6 +2319,12 @@
     if (paintKey===key) return;
     paintKey = key;
     const parts = [{model:geometry.office}];
+    const withDesks = desksVisible();
+    const addRobot = (role,lift) => {
+      const skin = skins.get(role.thread.id);
+      if (skin) drawRobotSkin(role,lift,skin);
+      else parts.push(...robotParts(role,frame,lift));
+    };
     for (const floor of layout.floors) {
       if (!visibleAt(floor.y)) continue;
       parts.push({model:floorModels[floor.project?1:0],offset:[0,floor.y,0]});
@@ -2106,7 +2332,9 @@
       if (desks) parts.push({model:desks});
     }
     if (layout.collaboration && layout.hubY!==undefined && visibleAt(layout.hubY)) {
-      parts.push({model:hub,offset:[0,layout.hubY-PROJECT,0]});
+      const offset = [0,layout.hubY-PROJECT,0];
+      parts.push({model:hubRug,offset});
+      if (withDesks) parts.push({model:hub,offset});
     }
     for (const room of layout.rooms) {
       if (layout.flashingProjects.has(room.project)) parts.push({model:geometry.highlights.get(room.room)});
@@ -2115,11 +2343,16 @@
       if (layout.sectionMode && layout.flashingProjects.has(role.thread.project_id) && geometry.highlights.has(role.thread.id)) {
         parts.push({model:geometry.highlights.get(role.thread.id)});
       }
-      parts.push(...robotParts(role,frame,lifts[index]));
+      addRobot(role,lifts[index]);
     }
     for (const role of agents) {
-      parts.push({model:agentDesks.get(workstationScale(role)),offset:[role.x,role.y,role.z]});
-      parts.push(...robotParts(role,frame,role.thread.status==='waiting'?1:0));
+      if (withDesks) parts.push({model:agentDesks.get(workstationScale(role)),offset:[role.x,role.y,role.z]});
+      addRobot(role,role.thread.status==='waiting'?1:0);
+    }
+    for (const [id,image] of robotSkinNodes) {
+      if (skins.has(id)) continue;
+      image.remove();
+      robotSkinNodes.delete(id);
     }
     if (renderer) renderer.paint(parts);
     else drawFallback(parts);
@@ -2175,26 +2408,55 @@
     node.append(team);
   }
 
-  function drawAgentLinks() {
-    const links = layout.agents.map(role => {
-      const {thread,parent,side,x,y,z} = role;
+  function agentLinkPoints(role) {
+    const {parent,side,x,y,z} = role;
+    if (desksVisible()) {
       const scale = workstationScale(parent);
       const helperScale = workstationScale(role);
-      const [fromX,fromY] = project([parent.x+side*.49*scale,y+.57*scale,parent.z+.64*scale]);
-      const [toX,toY] = project([x-side*.30*helperScale,y+.57*AGENT_SIZE*helperScale,z+.64*AGENT_SIZE*helperScale]);
+      return [
+        project([parent.x+side*.49*scale,y+.57*scale,parent.z+.64*scale]),
+        project([x-side*.30*helperScale,y+.57*AGENT_SIZE*helperScale,z+.64*AGENT_SIZE*helperScale]),
+      ];
+    }
+    const box = robot => robotSkinBox(robot,Number(robot.thread.status==='waiting'),
+      robotSkinImages.get(robotSkinAssignments.get(robot.thread.id)));
+    const from = box(parent), to = box(role);
+    const edge = (start,end) => {
+      const dx = end.x-start.x, dy = end.y-start.y;
+      const fraction = Math.min(.43,.46/Math.hypot(dx/start.width,dy/start.height));
+      return [start.x+dx*fraction,start.y+dy*fraction];
+    };
+    return [edge(from,to),edge(to,from)];
+  }
+
+  function drawAgentLinks() {
+    if (!view) return;
+    const active = new Set();
+    for (const role of layout.agents) {
+      const {thread,parent} = role;
+      const [[fromX,fromY],[toX,toY]] = agentLinkPoints(role);
       const dx = toX-fromX, dy = toY-fromY;
-      const link = document.createElement('span');
-      link.className = 'agent-link';
+      let link = agentLinkNodes.get(thread.id);
+      if (!link) {
+        link = document.createElement('span');
+        link.className = 'agent-link';
+        link.dataset.agent = thread.id;
+        agentLinkNodes.set(thread.id,link);
+        agentLinks.append(link);
+      }
+      active.add(thread.id);
       link.dataset.status = thread.status;
       link.dataset.owner = parent.thread.id;
-      link.dataset.agent = thread.id;
       link.style.left = fromX+'px';
       link.style.top = fromY+'px';
       link.style.width = Math.hypot(dx,dy)+'px';
       link.style.transform = 'rotate('+Math.atan2(dy,dx)+'rad)';
-      return link;
-    });
-    agentLinks.replaceChildren(...links);
+    }
+    for (const [id,link] of agentLinkNodes) {
+      if (active.has(id)) continue;
+      link.remove();
+      agentLinkNodes.delete(id);
+    }
   }
 
   function addFloorPager(floor) {
@@ -2319,7 +2581,7 @@
   }
 
   function syncIdleMotion() {
-    if (!state.visible || showingUsage || reduced.matches || !visibleIdleFloors.size) {
+    if (!state.visible || activeView!=='office' || reduced.matches || !visibleIdleFloors.size) {
       clearTimeout(idleTimer);
       idleTimer = lastIdleTick = 0;
       for (const floor of visibleIdleFloors) {
@@ -2464,6 +2726,7 @@
       ? t('跨项目协作')+' '+executors.filter(item => item.received).length+'/'+executors.length
       : t('跨项目协作');
     updateToolbarState();
+    if (activeView==='pipeline') syncPipelineProjects();
     const selected = currentThread(state.selected);
     const heading = document.createElement('strong');
     const subtitle = document.createElement('span');
@@ -2538,7 +2801,7 @@
   }
 
   function openCollaboration() {
-    showUsageView(false);
+    showView('office');
     if (dialog.open) return;
     closeOfficeDialogs(dialog);
     dialogKey = '';
@@ -2804,6 +3067,12 @@
       if (expires<=now) state.departures.delete(id);
     }
     const shown = new Set([...state.active.map(thread => thread.id),...state.departures.keys()]);
+    if (robotSkinAssignments.size) {
+      const activeAgents = new Set([...state.agents.values()].flatMap(agents => agents.map(agent => agent.id)));
+      for (const id of robotSkinAssignments.keys()) {
+        if (!shown.has(id) && !state.remembered.has(id) && !activeAgents.has(id)) robotSkinAssignments.delete(id);
+      }
+    }
     for (const id of state.badges.keys()) {
       if (!shown.has(id)) state.badges.delete(id);
     }
@@ -2825,7 +3094,7 @@
     }
     if (!layout.threadIds.has(state.selected)) state.selected = layout.roles[0]?.thread.id ?? null;
     updateControls();
-    if (state.visible && !showingUsage) {
+    if (state.visible && activeView==='office') {
       sizeScene();
       if (anchor && layout.sectionMode &&
           (previousFloors.length!==layout.floors.length || previousFloors.some((floor,index) => floor.id!==layout.floors[index].id))) {
@@ -2971,6 +3240,7 @@
       if (settingsDialog.open) flushSettingText();
       hideChatTitle();
       stopRobotMotion();
+      clearRobotSkinNodes();
       state.waitingSince.clear();
       stopPulses();
       state.pendingDispatchPulses = [];
@@ -2980,16 +3250,18 @@
       state.timer = 0;
       state.flashes.clear();
       if (dialog.open) dialog.close();
+      pipeline.setActive(false);
       return;
     }
-    if (opening && !showingUsage) {
+    if (opening && activeView==='office') {
       state.selectedSection = undefined;
       scene.scrollTop = 0;
+      resize();
+      if (view) scene.scrollLeft = (view.width-view.viewportWidth)/2;
     }
-    resize();
-    if (opening && !showingUsage && view) scene.scrollLeft = (view.width-view.viewportWidth)/2;
     refresh();
-    if (showingUsage) renderUsagePlan();
+    if (activeView==='usage') renderUsagePlan();
+    if (activeView==='pipeline') pipeline.setActive(true);
   }
 
   function officeSceneScale() {
@@ -3037,7 +3309,7 @@
       scene.scrollLeft = view.width/2+zoomAnchor.x*view.scale-zoomAnchor.left;
       if (zoomAnchor.y!==null) scene.scrollTop = view.floor+zoomAnchor.y*view.scale-zoomAnchor.top;
     }
-    if (state.visible && !showingUsage) {
+    if (state.visible && activeView==='office') {
       updateToolbarState();
       arrangeAgentRobots();
       updateGeometry();
@@ -3187,6 +3459,112 @@
   const renderSettingsHelp = connectDialogHelp(settingsDialog,settingsForm.querySelector('.settings-fields'));
   const settingsFields = settingsForm.querySelector('fieldset');
   const settingsFeedback = byId('settings-feedback');
+  const chooseSkinButton = byId('choose-robot-skin');
+  const chooseSkinFolder = byId('choose-robot-skin-folder');
+  const resetSkinButton = byId('reset-robot-skin');
+  const skinPreview = byId('robot-skin-preview');
+  const skinCount = byId('robot-skin-count');
+  const skinStatus = byId('robot-skin-status');
+  const skinDeskChoice = byId('robot-skin-desks');
+  const skinDeskSetting = settingsForm.elements.namedItem('show_skin_desks');
+  const skinMessages = {
+    importing:'正在导入图片…',
+    saved:'已应用机器人皮肤组。',
+    partial:'已应用机器人皮肤组，跳过了 {0} 张无法读取的图片。',
+    reset:'已恢复默认机器人。',
+    invalid:'没有可以导入的图片。请确认图片能打开且每张不超过 25 MB。',
+    tooMany:'一组最多可导入 256 张图片。',
+    storage:'无法更新本机皮肤。请检查文件权限。',
+  };
+  let skinMessage = '';
+  let skippedSkins = 0;
+
+  function renderSkinMessage() {
+    skinCount.hidden = robotSkinCount===0;
+    skinCount.textContent = robotSkinCount ? t('当前 {0} 张图片',robotSkinCount) : '';
+    skinStatus.hidden = !skinMessage;
+    skinStatus.textContent = skinMessage ? t(skinMessages[skinMessage],skippedSkins) : '';
+    skinStatus.toggleAttribute('data-error',['invalid','tooMany','storage'].includes(skinMessage));
+  }
+
+  function renderSkinDeskSetting() {
+    skinDeskChoice.hidden = robotSkinCount===0;
+    skinDeskSetting.disabled = !settingsBaseline || robotSkinCount===0;
+    skinDeskSetting.checked = showSkinDesks;
+  }
+
+  function setSkinDesks(visible) {
+    if (showSkinDesks===visible) return;
+    showSkinDesks = visible;
+    updateGeometry();
+    drawAgentLinks();
+    paint();
+  }
+
+  function setSkinButtons(busy) {
+    chooseSkinButton.disabled = busy;
+    chooseSkinFolder.disabled = busy;
+    resetSkinButton.disabled = busy;
+    resetSkinButton.hidden = robotSkinCount===0;
+  }
+
+  window.officeReceiveRobotSkin = (count,revision,status,busy,skipped) => {
+    if (revision<robotSkinRevision) return;
+    if (revision!==robotSkinRevision) {
+      robotSkinCount = count;
+      robotSkinRevision = revision;
+      remainingRobotSkins = [];
+      robotSkinImages.clear();
+      robotSkinAssignments.clear();
+      skinPreview.replaceChildren();
+      clearRobotSkinNodes();
+      if (count) loadRobotSkinImage(0);
+      updateGeometry();
+      drawAgentLinks();
+      paint();
+    }
+    skinMessage = status;
+    skippedSkins = skipped;
+    renderSkinMessage();
+    renderSkinDeskSetting();
+    setSkinButtons(busy);
+  };
+
+  function renderSkinPreview() {
+    const skin = robotSkinImages.get(0);
+    if (!skin) return;
+    const image = skinPreview.firstElementChild ?? new Image();
+    image.alt = '';
+    const source = skinSource(skin);
+    if (image.src!==source) image.src = source;
+    if (!image.parentNode) skinPreview.append(image);
+  }
+
+  window.officeReceiveRobotSkinImage = async (data,index,revision,still) => {
+    if (revision!==robotSkinRevision) return;
+    const source = (still ? 'data:image/gif;base64,' : 'data:image/png;base64,')+data;
+    const stillSource = still ? 'data:image/png;base64,'+still : source;
+    const image = new Image();
+    image.src = stillSource;
+    try { await image.decode(); } catch { return; }
+    if (revision!==robotSkinRevision) return;
+    robotSkinImages.set(index,{source,still:stillSource,width:image.naturalWidth,height:image.naturalHeight});
+    if (index===0) renderSkinPreview();
+    if (!desksVisible()) drawAgentLinks();
+    paintKey = '';
+    paint();
+  };
+
+  function sendSkinAction(action,folder=false) {
+    skinMessage = '';
+    renderSkinMessage();
+    setSkinButtons(true);
+    bridge({action,folder});
+  }
+  chooseSkinButton.addEventListener('click',() => sendSkinAction('chooseRobotSkin'));
+  chooseSkinFolder.addEventListener('click',() => sendSkinAction('chooseRobotSkin',true));
+  resetSkinButton.addEventListener('click',() => sendSkinAction('resetRobotSkin'));
+
   const loginItem = byId('office-login-item');
   const updateButton = byId('check-office-update');
   let appSettings = null;
@@ -3443,6 +3821,7 @@
         menu_bar_metric: menuBarMetrics.has(office.menu_bar_metric) ? office.menu_bar_metric : 'token_speed',
         live_quota: office.live_quota === true,
         office_zoom: office.office_zoom ?? DEFAULT_ZOOM,
+        show_skin_desks: office.show_skin_desks !== false,
         coordination_section: office.coordination_section ?? null,
         projects: office.projects ?? {},
         thread_projects: office.thread_projects ?? {},
@@ -3463,6 +3842,9 @@
       if (gestureZoom===undefined && !pendingSettings.has('office_zoom') && !failedSettings.has('office_zoom')) {
         setOfficeZoom(settingsBaseline.office_zoom);
       }
+      if (!pendingSettings.has('show_skin_desks') && !failedSettings.has('show_skin_desks')) {
+        setSkinDesks(settingsBaseline.show_skin_desks);
+      }
       renderSectionSettings();
       setVisibleSections(settingsBaseline.visible_sections);
       refresh();
@@ -3475,6 +3857,7 @@
       settingsLoadError = error;
     }
     settingsFields.disabled = !settingsBaseline;
+    renderSkinDeskSetting();
     window.officeDropdowns?.refresh();
     sendNextSetting();
   };
@@ -3586,6 +3969,11 @@
   sectionMode.addEventListener('change',applyVisibleSectionSetting);
   settingsMetric.addEventListener('change', () => queueSetting('menu_bar_metric',settingsMetric.value));
   liveQuotaSetting.addEventListener('change', () => queueSetting('live_quota',liveQuotaSetting.checked));
+  skinDeskSetting.addEventListener('change', () => {
+    if (!settingsBaseline || !robotSkinCount) return;
+    setSkinDesks(skinDeskSetting.checked);
+    queueSetting('show_skin_desks',showSkinDesks);
+  });
   settingsLanguage.addEventListener('change', () => queueSetting('language',settingsLanguage.value));
   byId('add-alias').addEventListener('click', () => {
     const row = aliasRow();
@@ -3625,6 +4013,7 @@
   const usagePanel = byId('usage-panel');
   const officeButton = byId('show-office');
   const usageButton = byId('show-usage');
+  const pipelineButton = byId('show-pipeline');
   const usageDetailButton = byId('open-usage-detail');
   usageDetailButton.hidden = !nativeToolbar;
   usageDetailButton.addEventListener('click',() => bridge({action:'openUsageDetails'}));
@@ -3658,7 +4047,7 @@
   let renderedUsageLive = '';
   let renderedUsageHistory = '';
   let selectedUsageDay = null;
-  let showingUsage = false;
+  let activeView = 'office';
   let usagePoints = [];
   let usageDayRequest = 0;
   let usageDayKeyRequested = '';
@@ -3671,10 +4060,10 @@
 
   function updateToolbarState() {
     if (!nativeToolbar) return;
-    const floorCount = !showingUsage && layout.sectionMode ? Math.min(layout.floors.length,MAX_VISIBLE_FLOORS) : 0;
+    const floorCount = activeView==='office' && layout.sectionMode ? Math.min(layout.floors.length,MAX_VISIBLE_FLOORS) : 0;
     const message = {
       action:'toolbarState',
-      view:showingUsage?'usage':'office',
+      view:activeView,
       source:source.textContent,
       sourceStatus:source.dataset.status,
       floorCount,
@@ -3835,7 +4224,7 @@
 
   function showUsageTooltip(index,button) {
     const point = usagePoints[index];
-    if (!showingUsage || !point || !button) return;
+    if (activeView!=='usage' || !point || !button) return;
     usageText(byId('usage-tooltip-date'),point.day);
     usageText(byId('usage-tooltip-tokens'),point.count===null?t('暂无数据'):usageFormat(point.count)+' tokens');
     usageText(byId('usage-tooltip-cost'),usageCost(point.estimate));
@@ -3936,7 +4325,7 @@
   }
 
   window.officeReceiveUsageDay = (data,request) => {
-    if (request!==usageDayRequest || !showingUsage || data?.day!==selectedUsageDay) return;
+    if (request!==usageDayRequest || activeView!=='usage' || data?.day!==selectedUsageDay) return;
     if (data.unavailable) {
       usageStatus('usage-ranking-status','unavailable',t('暂时无法读取当日会话用量。'));
       return;
@@ -4113,7 +4502,7 @@
       row.hidden = index>0 && !window;
       if (!row.hidden) nextUpdate = Math.min(nextUpdate,renderQuotaRow(row,window,now));
     }
-    if (state.visible && showingUsage && Number.isFinite(nextUpdate)) {
+    if (state.visible && activeView==='usage' && Number.isFinite(nextUpdate)) {
       usageResetTimer = setTimeout(renderUsagePlan,nextUpdate);
     }
   }
@@ -4250,34 +4639,50 @@
     if (result.textContent) row.append(result);
   }
 
-  function showUsageView(visible) {
-    if (showingUsage===visible) return;
-    if (visible) saveGestureZoom();
+  function syncPipelineProjects() {
+    pipeline.setProjects(state.recent.filter(thread => state.projectNames.has(thread.project_id))
+      .map(thread => [thread.id, threadName(thread)]));
+  }
+
+  function showView(target) {
+    const previous = activeView;
+    if (previous===target) return;
+    if (previous==='office') saveGestureZoom();
+    if (previous==='usage') clearTimeout(usageResetTimer);
+    if (previous==='pipeline') pipeline.setActive(false);
     closeOfficeDialogs();
-    showingUsage = visible;
-    syncIdleMotion();
-    byId('office-view').hidden = visible;
-    zoomControls.hidden = visible;
-    usagePanel.hidden = !visible;
-    officeButton.setAttribute('aria-pressed',String(!visible));
-    usageButton.setAttribute('aria-pressed',String(visible));
+    activeView = target;
+    const office = target==='office';
+    byId('office-view').hidden = !office;
+    zoomControls.hidden = !office;
+    usagePanel.hidden = target!=='usage';
+    byId('pipeline-panel').hidden = target!=='pipeline';
+    officeButton.setAttribute('aria-pressed',String(office));
+    usageButton.setAttribute('aria-pressed',String(target==='usage'));
+    pipelineButton.setAttribute('aria-pressed',String(target==='pipeline'));
     usageTooltip.hidden = true;
     updateToolbarState();
-    if (visible) {
+    syncIdleMotion();
+    if (!office) {
       stopRobotMotion();
+      clearRobotSkinNodes();
       stopPulses();
+    }
+    if (target==='usage') {
       renderedUsageHistory = usageDayKeyRequested = '';
       renderUsageLive();
       renderUsageHistory();
       renderUsagePlan();
+    } else if (target==='pipeline') {
+      syncPipelineProjects();
+      pipeline.setActive(state.visible, previous==='office' ? state.selected : undefined);
     } else {
-      clearTimeout(usageResetTimer);
       resize();
       refresh();
     }
   }
 
-  window.officeOpenUsage = () => showUsageView(true);
+  window.officeOpenUsage = () => showView('usage');
   window.officeSetUsage = value => {
     usage = value;
     const historyStatus = usageState(usage?.history_status);
@@ -4300,14 +4705,15 @@
     renderUsageMoney(liveMoney,liveCost);
     usageText(byId('office-cost-today'),displayCost ?? '—');
     byId('office-cost-today').title = usageCost(todayCost);
-    if (showingUsage) {
+    if (activeView==='usage') {
       renderUsageLive();
       renderUsageHistory();
       renderUsagePlan();
     }
   };
   usageButton.addEventListener('click',window.officeOpenUsage);
-  officeButton.addEventListener('click',() => showUsageView(false));
+  officeButton.addEventListener('click',() => showView('office'));
+  pipelineButton.addEventListener('click',() => showView('pipeline'));
   usagePanel.addEventListener('scroll',() => { usageTooltip.hidden = true; },{passive:true});
   window.addEventListener('resize',() => { usageTooltip.hidden = true; });
   usagePanel.addEventListener('keydown',event => {
@@ -4328,7 +4734,7 @@
 
   function locateWaiting() {
     if (!layout.waiting.length) return;
-    showUsageView(false);
+    showView('office');
     const index = layout.waiting.findIndex(thread => thread.id===state.selected);
     const thread = layout.waiting[(index+1)%layout.waiting.length];
     closeOfficeDialogs();
@@ -4478,7 +4884,11 @@
   });
   canvas.addEventListener('webglcontextrestored',chooseRenderer);
   dark.addEventListener('change',recolor);
-  reduced.addEventListener('change',paint);
+  reduced.addEventListener('change',() => {
+    paintKey = '';
+    renderSkinPreview();
+    paint();
+  });
   reduced.addEventListener('change',syncIdleMotion);
   scene.addEventListener('scroll',() => {
     hideChatTitle();
@@ -4497,8 +4907,10 @@
     renderAliasDirectories();
     updateSettingFeedback();
     renderAppSettings();
+    renderSkinMessage();
     renderCollaborationHelp();
     renderSettingsHelp();
+    pipeline.render();
     hideChatTitle();
     usageTooltip.hidden = true;
     window.officeSetUsage(usage);

@@ -28,6 +28,7 @@ Codex Office 是一个 macOS 菜单栏 App，用来查看本机 Codex 聊天。�
 - **按楼层浏览办公室。** Codex 的「项目」和自建分区各占一层，点击分区标签可定位。屏幕空间足够时，默认完整显示三层，更多楼层可以滚动查看。缩放工具栏显示当前百分比并自动保存比例。
 - **在菜单栏查看状态。** 默认显示进行中的主聊天数。有待确认事项时，优先显示等待数量。旁边可三选一显示今日 Token、Token 速度或套餐余量。小机器人的步频随最近一分钟的 Token 用量变化。
 - **跟踪跨项目协作。** 设置统筹分区后，可查看从本机日志识别到的成功派发。也可以自己选择统筹聊天和执行聊天、手动记录派发及回执。手动记录只在本机保存关系，不会启动 Codex 任务。
+- **查看 CI 和部署状态。** 打开顶部的「CI / 部署」，在 GitHub Actions 中选择仓库。页首的「最新 CI」显示工作流进度和同提交的 Vercel 部署。没有同提交部署时，显示标有自身提交号和时间的「最近一次前端部署」。展开「运行历史和作业详情」可查旧运行，页首继续跟踪最新一轮。
 
 ## 用量
 
@@ -47,6 +48,12 @@ API 费用按 [OpenAI 标准 API 价格](https://developers.openai.com/api/docs/
 
 Codex Office 在本机读取会话日志、压缩归档和 Codex 桌面数据库。设置保存在 `~/Library/Application Support/Codex Office/office.json`，手动协作记录和回执保存在 App 的 macOS 偏好中。
 
+在「办公室设置 → 机器人皮肤」可以多选本机图片或导入文件夹。机器人出现时从皮肤组随机选一张，在它留在场景期间保持同一张。皮肤显示在桌子前方。设有动画的 GIF 会按原文件播放。开启系统「减少动态效果」时显示首帧。皮肤组最多支持 256 张，导入会替换当前组。图片副本保存在本机的 `~/Library/Application Support/Codex Office/robot-skins.plist`，点击「恢复默认」会删除副本。超出动画限制的 GIF 和其他动图保留首帧。GIF 动画上限为 180 KiB、512×512、120 帧，所有帧合计最多 800 万像素。
+
+使用自定义皮肤时，可以关闭「显示工位桌子」。子 Agent 的皮肤、工作状态与数据流连线依然可见，连线会接到角色身边。
+
+「CI / 部署」只读查询当前视图选中的目标。Office 从本机 Codex 项目和聊天工作目录中的 GitHub `origin` 识别并去重仓库，记住上次选中的仓库及哪些仓库复用已有的 `gh` 登录。点「关联 Vercel 项目」可按仓库保存 Project ID 和可选的 Team ID，多个本地工作目录共用同一关联。也可沿用 `.vercel/project.json` 或 `.vercel/repo.json`。Vercel 查询使用支持 `vercel api` 的已登录 CLI，凭证由各自的 CLI 管理。
+
 ## 从源码构建
 
 从源码构建需要 Apple Command Line Tools 和 macOS 26 或更新的 SDK。
@@ -58,7 +65,7 @@ open "build/Codex Office.app"
 
 要为指定芯片构建，运行 `make mac-office OFFICE_ARCH=arm64`（Apple 芯片）或 `make mac-office OFFICE_ARCH=x86_64`（Intel）。每次构建都输出到 `build/Codex Office.app`。
 
-发布构建用 `OFFICE_RELEASE_REPO=owner/repo` 指定 GitHub 仓库，并使用 `v0.2.1` 这样的标签发布正式版本，即可启用「检查更新」。
+发布构建用 `OFFICE_RELEASE_REPO=owner/repo` 指定 GitHub 仓库，并使用 `v0.3.0` 这样的标签发布正式版本，即可启用「检查更新」。
 
 采集器优先使用 `CODEX_HOME`，默认读取 `~/.codex`。也可以在启动时指定其他 Codex 目录。
 

@@ -57,6 +57,7 @@ struct ActivityRollout {
     private var created: Date?
     private(set) var last: Date?
     private var turn: String?
+    private(set) var turnKey: String?
     private(set) var status = "idle"
     private(set) var terminal: Date?
     private(set) var tokenTotal: Int64?
@@ -163,16 +164,18 @@ struct ActivityRollout {
                (thread as? String)?.isEmpty != true, officeThreadID(thread) != identity { return }
             if kind == "task_started" {
                 guard eventTurn != turn, stamp >= (last ?? stamp) else { return }
-                turn = eventTurn
                 status = "running"
                 terminal = nil
                 edits.removeAll()
             } else if (eventTurn == turn && status == "running") || turn == nil {
-                turn = eventTurn
                 status = kind == "task_complete" ? "completed" : "interrupted"
                 terminal = stamp
             } else {
                 return
+            }
+            if turn != eventTurn {
+                turn = eventTurn
+                turnKey = officeDigest(eventTurn, length: 32)
             }
             last = max(stamp, last ?? stamp)
         } else if kind == "token_count" {

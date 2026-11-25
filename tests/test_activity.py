@@ -193,17 +193,23 @@ class CodexActivityTests(unittest.TestCase):
         }
         rows = self.rows()
         self.assertEqual(rows[self.owner]["status"], "waiting")
+        turn_key = rows[self.owner]["turn_key"]
+        self.assertRegex(turn_key, r"^[0-9a-f]{32}$")
+        self.assertNotEqual(rows[child]["turn_key"], turn_key)
         self.assertEqual(rows[self.owner]["attention_thread_id"], child)
         self.assertEqual(rows[self.owner]["project_id"], project_id(self.a))
         self.assertEqual(self.rows(1860)[self.owner]["status"], "waiting")
         self.attention = {self.owner: {"owner": "desktop", "revision": 2, "status": "active", "flags": []}}
         rows = self.rows(1860)
         self.assertEqual(rows[self.owner]["status"], "running")
+        self.assertEqual(rows[self.owner]["turn_key"], turn_key)
         self.assertIsNone(rows[self.owner]["attention_thread_id"])
         self.write(child_path, self.record("event_msg", 21, type="task_complete", turn_id="child-turn"))
         self.write(parent, self.record("event_msg", 22, type="task_complete", turn_id=self.turn))
         self.attention = {}
-        self.assertEqual(self.rows(24)[self.owner]["status"], "completed")
+        completed = self.rows(24)[self.owner]
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["turn_key"], turn_key)
         self.assertEqual(self.scan(24)["polled"], [])
 
     def test_unreadable_sidebar_keeps_last_known_membership(self):
@@ -223,16 +229,20 @@ class CodexActivityTests(unittest.TestCase):
         encoded = json.dumps(row)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(encoded[:20])
-        self.assertEqual(self.rows()[self.owner]["status"], "running")
+        running = self.rows()[self.owner]
+        self.assertEqual(running["status"], "running")
         with path.open("a", encoding="utf-8") as handle:
             handle.write(encoded[20:] + "\n")
         self.write(path, self.record("event_msg", 3, type="task_complete", turn_id=self.turn))
-        self.assertEqual(self.rows()[self.owner]["status"], "interrupted")
+        interrupted = self.rows()[self.owner]
+        self.assertEqual(interrupted["status"], "interrupted")
+        self.assertEqual(interrupted["turn_key"], running["turn_key"])
         self.write(path, self.record("event_msg", 4, type="task_started", turn_id="new"),
                    self.change(self.owner, self.turn, 5, "late", [self.b / "old.py"]),
                    self.change(self.owner, "new", 6, "new", [self.b / "new.py"]))
         owner = self.rows()[self.owner]
         self.assertEqual(owner["status"], "running")
+        self.assertNotEqual(owner["turn_key"], running["turn_key"])
         self.assertEqual(len(owner["cross_edits"]), 1)
         self.assertIsNone(owner["terminal_at"])
         self.assertEqual(self.rows(1860)[self.owner]["status"], "unknown")

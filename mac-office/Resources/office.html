@@ -700,7 +700,7 @@
             <button id="reset-robot-skin" type="button" hidden>恢复默认</button>
           </div>
           <small id="robot-skin-count" hidden></small>
-          <small>机器人出现时随机选一张，图片只保存在本机。</small>
+          <small>每轮对话随机换一个角色，图片只保存在本机。</small>
           <label id="robot-skin-desks" class="login-item-choice" hidden>
             <input type="checkbox" name="show_skin_desks" disabled><span>显示工位桌子</span>
           </label>
@@ -2227,19 +2227,28 @@
     return robotSkinImages.get(index);
   }
 
-  function robotSkinFor(id) {
+  function robotSkinFor({id,turn_key:turnKey}) {
     if (!robotSkinCount) return null;
-    if (!robotSkinAssignments.has(id)) {
-      if (!remainingRobotSkins.length) {
+    let assignment = robotSkinAssignments.get(id);
+    if (!assignment || (turnKey && assignment.turnKey && turnKey!==assignment.turnKey)) {
+      const previous = robotSkinCount>1 ? assignment?.displayedIndex ?? assignment?.index : undefined;
+      // Refill if the only remaining skin was displayed in the last turn.
+      if (!remainingRobotSkins.length || (remainingRobotSkins.length===1 && remainingRobotSkins[0]===previous)) {
         remainingRobotSkins = Array.from({length:robotSkinCount},(_,index) => index);
       }
-      const choice = Math.floor(Math.random()*remainingRobotSkins.length);
+      const excluded = remainingRobotSkins.indexOf(previous);
+      let choice = Math.floor(Math.random()*(remainingRobotSkins.length-Number(excluded>=0)));
+      if (excluded>=0 && choice>=excluded) choice++;
       const index = remainingRobotSkins[choice];
       remainingRobotSkins[choice] = remainingRobotSkins.at(-1);
       remainingRobotSkins.pop();
-      robotSkinAssignments.set(id,index);
+      assignment = {turnKey,index,displayedIndex:assignment?.displayedIndex};
+      robotSkinAssignments.set(id,assignment);
+    } else if (turnKey) {
+      assignment.turnKey = turnKey;
     }
-    return loadRobotSkinImage(robotSkinAssignments.get(id));
+    if (loadRobotSkinImage(assignment.index)) assignment.displayedIndex = assignment.index;
+    return robotSkinImages.get(assignment.displayedIndex);
   }
 
   function skinSource(skin) {
@@ -2291,9 +2300,12 @@
     const roles = layout.roles.filter(role => visibleAt(role.y));
     const agents = layout.agents.filter(role => visibleAt(role.y));
     const skins = new Map();
+    let skinChanged = false;
     for (const {thread} of [...roles,...agents]) {
-      const skin = robotSkinFor(thread.id);
+      const previous = robotSkinAssignments.get(thread.id)?.displayedIndex;
+      const skin = robotSkinFor(thread);
       if (skin) skins.set(thread.id,skin);
+      if (previous!==robotSkinAssignments.get(thread.id)?.displayedIndex) skinChanged = true;
     }
     const lifts = roles.map(role => {
       if (role.thread.status!=='waiting') return 0;
@@ -2316,7 +2328,7 @@
       layout.collaboration?.coordinator_id,[...layout.flashingProjects],
       roles.map(role => role.thread.status),agents.map(({thread,x,y,z,scale}) => [thread.id,thread.status,x,y,z,scale]),frame,lifts
     ]);
-    if (paintKey===key) return;
+    if (paintKey===key && !skinChanged) return;
     paintKey = key;
     const parts = [{model:geometry.office}];
     const withDesks = desksVisible();
@@ -2356,6 +2368,7 @@
     }
     if (renderer) renderer.paint(parts);
     else drawFallback(parts);
+    if (skinChanged && !withDesks) drawAgentLinks();
   }
 
   function locate(node,point,maxWidth) {
@@ -2419,7 +2432,7 @@
       ];
     }
     const box = robot => robotSkinBox(robot,Number(robot.thread.status==='waiting'),
-      robotSkinImages.get(robotSkinAssignments.get(robot.thread.id)));
+      robotSkinImages.get(robotSkinAssignments.get(robot.thread.id)?.displayedIndex));
     const from = box(parent), to = box(role);
     const edge = (start,end) => {
       const dx = end.x-start.x, dy = end.y-start.y;
@@ -3067,12 +3080,6 @@
       if (expires<=now) state.departures.delete(id);
     }
     const shown = new Set([...state.active.map(thread => thread.id),...state.departures.keys()]);
-    if (robotSkinAssignments.size) {
-      const activeAgents = new Set([...state.agents.values()].flatMap(agents => agents.map(agent => agent.id)));
-      for (const id of robotSkinAssignments.keys()) {
-        if (!shown.has(id) && !state.remembered.has(id) && !activeAgents.has(id)) robotSkinAssignments.delete(id);
-      }
-    }
     for (const id of state.badges.keys()) {
       if (!shown.has(id)) state.badges.delete(id);
     }
@@ -3187,7 +3194,9 @@
     for (const thread of threads) {
       if (!thread?.id || roots.has(thread.id) || !roots.has(thread.root_id) || !hasActiveTurn(thread)) continue;
       if (!state.agents.has(thread.root_id)) state.agents.set(thread.root_id,[]);
-      state.agents.get(thread.root_id).push({id:thread.id,status:thread.status,activity:Date.parse(thread.last_activity) || 0});
+      state.agents.get(thread.root_id).push({
+        id:thread.id,turn_key:thread.turn_key,status:thread.status,activity:Date.parse(thread.last_activity) || 0,
+      });
     }
     for (const agents of state.agents.values()) {
       agents.sort((a,b) => Number(b.status==='waiting')-Number(a.status==='waiting') || a.id.localeCompare(b.id));
@@ -3223,6 +3232,12 @@
       if (state.visible && previouslyActive.has(id)
           && (thread.status==='completed' || thread.status==='interrupted')) {
         state.departures.set(id,{thread,expires:now+EXIT_MS});
+      }
+    }
+    if (state.source==='ok' && robotSkinAssignments.size) {
+      const recentIDs = new Set(threads.map(thread => thread?.id));
+      for (const id of robotSkinAssignments.keys()) {
+        if (!recentIDs.has(id) && !state.remembered.has(id) && !state.departures.has(id)) robotSkinAssignments.delete(id);
       }
     }
     const focusEdit = collectEdits(now,previousCollection);
@@ -3550,7 +3565,6 @@
     if (revision!==robotSkinRevision) return;
     robotSkinImages.set(index,{source,still:stillSource,width:image.naturalWidth,height:image.naturalHeight});
     if (index===0) renderSkinPreview();
-    if (!desksVisible()) drawAgentLinks();
     paintKey = '';
     paint();
   };

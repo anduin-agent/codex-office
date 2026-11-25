@@ -99,6 +99,49 @@ class CodexTokenUsageTests(unittest.TestCase):
         self.assertEqual((history["first_day"], history["active_days"], history["total_tokens"]), (day, 1, 55))
         self.assertIn({"day": day, "tokens": 55}, history["days"])
 
+    def test_menu_scan_preserves_counts_and_quota_and_keeps_history_available_on_demand(self):
+        self.now = self.now.astimezone().replace(hour=12, minute=0, second=0)
+        path = self.sessions / "current.jsonl"
+        reset = int(self.now.timestamp()) + 90
+        self.write(path, self.row(-600, "session_meta", id=self.owner, creator_account_id="fixture-account"),
+                   self.row(-480, "turn_context", model="office-test-model"),
+                   self.row(-15, "event_msg", type="token_count", info={
+                       "total_token_usage": {"total_tokens": 100},
+                       "last_token_usage": {"total_tokens": 100, "input_tokens": 80,
+                                            "cached_input_tokens": 20, "output_tokens": 20},
+                   }, rate_limits={"limit_id": "codex", "primary": {
+                       "window_minutes": 300, "used_percent": 20, "resets_at": reset,
+                   }}))
+        prices = {"office-test-model": {"input": 2.0, "cached_input": 0.1, "output": 10.0}}
+
+        def scan(scope, seconds=0, budget=1.2):
+            return self.probe.request("tokenUsage", now=self.now.timestamp() + seconds,
+                                      scope=scope, budget=budget, prices=prices)
+
+        menu = scan("menu")
+        full = scan("full")
+        for field in ("live_status", "tokens_per_minute", "live_estimated_usd", "recent", "today_status",
+                      "today_tokens", "today_estimated_usd", "quota_account", "quota_sampled_at"):
+            self.assertEqual(menu[field], full[field])
+        self.assertEqual(menu["quota"]["remaining_percent"], full["quota"]["remaining_percent"])
+        self.assertIn("cycle_tokens", full["quota"])
+        self.assertNotIn("cycle_tokens", menu["quota"])
+        self.assertNotIn("history", menu)
+        self.assertEqual(full["history"]["total_tokens"], 100)
+
+        archived = self.archives / path.name
+        path.rename(archived)
+        quiet = scan("menu", seconds=60, budget=0)
+        self.assertEqual((quiet["tokens_per_minute"], quiet["today_tokens"], quiet["live_status"]), (0, 100, "ok"))
+        day = self.now.date().isoformat()
+        details = self.probe.request("usageDay", day=day)
+        self.assertEqual((details["total_sessions"], details["sessions"][0]["tokens"]), (1, 100))
+        self.assertIsNone(scan("menu", seconds=90)["quota"])
+
+        archived.unlink()
+        self.assertEqual(scan("menu")["today_tokens"], 0)
+        self.assertEqual(scan("full")["history"]["total_tokens"], 0)
+
     def test_daily_ranking_and_price_coverage_follow_counted_usage(self):
         self.now = datetime(2026, 11, 13, 12).astimezone()
         model = "office-test-model"

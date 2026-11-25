@@ -1022,8 +1022,15 @@ enum OfficeUITest {
         _ = try await view.evaluateJavaScript("window.officeOpenUsage()")
         try writeQuota(["window_minutes": 300, "used_percent": 20,
                         "resets_at": Int(now.timeIntervalSince1970) + 1_800], at: now.addingTimeInterval(-90))
+        office.offscreenUsageScope = .menu
+        await office.refreshOffscreenUsage()
+        guard office.offscreenMenuBar.title.hasSuffix("0/min") else {
+            throw Failure("Background usage did not update the menu bar rate")
+        }
+        office.offscreenUsageScope = .full
         await office.refreshOffscreenUsage()
         try await expect("A Plus quota rollout reaches both progress bars and countdowns through the native bridge", panel, view, """
+            !document.querySelector('#usage-history').hidden &&
             document.querySelector('#usage-plan-label').textContent==='5 小时额度剩余' &&
             !document.querySelector('#usage-plan-progress').hidden && document.querySelector('#usage-plan-progress').value===80 &&
             !document.querySelector('#usage-plan-countdown').hidden &&
@@ -1032,6 +1039,15 @@ enum OfficeUITest {
             !document.querySelector('#usage-plan-second-label').parentElement.querySelector('.usage-plan-countdown').hidden
             """)
         try writeQuota(["window_minutes": 300, "used_percent": 25, "resets_at": NSNull()], at: now.addingTimeInterval(-60))
+        office.offscreenUsageScope = .menu
+        await office.refreshOffscreenUsage()
+        office.pushOffscreenUsage()
+        try await expect("Reopening Usage shows the latest menu quota while keeping the previous chart", panel, view, """
+            document.querySelector('#usage-plan-progress').value===75 &&
+            !document.querySelector('#usage-history').hidden &&
+            document.querySelector('#usage-history-status').textContent.includes('显示上次统计')
+            """)
+        office.offscreenUsageScope = .full
         await office.refreshOffscreenUsage()
         try await expect("Plus displays the known five-hour percentage before a reset time is available", panel, view, """
             document.querySelector('#usage-plan-label').textContent==='5 小时额度剩余' &&
@@ -1777,8 +1793,8 @@ enum OfficeUITest {
             (() => {
                 const now = new Date().toISOString();
                 window.skinFixture = {source_status:'ok',collected_at:now,projects:[],threads:[
-                    {id:'skin-root',root_id:'skin-root',title:'Skin test',status:'running',last_activity:now},
-                    {id:'skin-child',root_id:'skin-root',parent_id:'skin-root',status:'running',last_activity:now}
+                    {id:'skin-root',root_id:'skin-root',title:'Skin test',turn_key:'root-1',status:'running',last_activity:now},
+                    {id:'skin-child',root_id:'skin-root',parent_id:'skin-root',turn_key:'child-1',status:'running',last_activity:now}
                 ]};
                 window.officeSetSnapshot(window.skinFixture,null,{});
                 window.officeSetVisible(true);
@@ -1884,6 +1900,68 @@ enum OfficeUITest {
                 return previous===image && source===image.src;
             })
             """)
+        _ = try await view.evaluateJavaScript("""
+            window.turnSkinSources = () => new Map(window.sceneSkinImages().map(image => [image.dataset.robotId,image.src]));
+            let snapshotTime = Date.now()+2000;
+            window.showSkinTurns = (root,child,rootStatus='waiting',childStatus='waiting') => {
+                const [main,agent] = window.skinFixture.threads;
+                window.officeSetSnapshot({...window.skinFixture,collected_at:new Date(snapshotTime++).toISOString(),threads:[
+                    {...main,turn_key:root,status:rootStatus},{...agent,turn_key:child,status:childStatus}
+                ]},null,{});
+            };
+            window.showSkinTurns('root-2','child-1');
+            """)
+        try await expect("A new main turn changes only the main skin, even with the same displayed status", panel, view, """
+            (() => {
+                const sources = window.turnSkinSources();
+                return sources.size===2 && sources.get('skin-root')!==window.initialSkinImages.get('skin-root')[1] &&
+                    sources.get('skin-child')===window.initialSkinImages.get('skin-child')[1] &&
+                    window.skinLink===document.querySelector('.agent-link[data-agent=skin-child]');
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.beforeChildTurn = window.turnSkinSources();
+            window.showSkinTurns('root-2','child-2');
+            """)
+        try await expect("A child agent draws independently when its own turn changes", panel, view, """
+            (() => {
+                const sources = window.turnSkinSources();
+                return sources.size===2 && sources.get('skin-root')===window.beforeChildTurn.get('skin-root') &&
+                    sources.get('skin-child')!==window.beforeChildTurn.get('skin-child');
+            })()
+            """)
+        _ = try await view.evaluateJavaScript("""
+            window.beforeReopen = window.turnSkinSources();
+            window.officeSetVisible(false);
+            window.officeSetVisible(true);
+            """)
+        try await expect("Reopening the panel keeps the skins of the current turns", panel, view, """
+            window.turnSkinSources().size===2 &&
+            [...window.turnSkinSources()].every(([id,source]) => window.beforeReopen.get(id)===source)
+            """)
+        _ = try await view.evaluateJavaScript("""
+            (() => {
+                window.officeSetVisible(false);
+                window.showSkinTurns('root-2','child-2','completed','completed');
+                const random = Math.random;
+                const preview = document.querySelector('#robot-skin-preview img').src;
+                // Without excluding the previous skin, the next draw would repeat it.
+                Math.random = () => window.beforeReopen.get('skin-root')===preview ? 0 : .9;
+                try {
+                    window.showSkinTurns('root-3','child-2','running','completed');
+                    window.officeSetVisible(true);
+                } finally {
+                    Math.random = random;
+                }
+            })()
+            """)
+        try await expect("A new turn after the previous one finished avoids its last skin", panel, view, """
+            window.turnSkinSources().has('skin-root') &&
+            window.turnSkinSources().get('skin-root')!==window.beforeReopen.get('skin-root')
+            """)
+        _ = try await view.evaluateJavaScript("window.showSkinTurns('root-3','child-3','running','running')")
+        try await expect("The next child turn is visible for the skin import checks", panel, view,
+                         "window.turnSkinSources().size===2")
         office.offscreenRobotSkinPicker = { _ in [invalid] }
         _ = try await view.evaluateJavaScript(choose)
         try await expect("An invalid selection preserves the previous skin", panel, view, """

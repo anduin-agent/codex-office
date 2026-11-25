@@ -46,7 +46,8 @@ enum CollectorProbe {
                         return OfficeTokenPrice(input: input, cachedInput: cached, output: output)
                     }
                     let prices = rates.isEmpty ? OfficePrices.empty : OfficePrices(updatedAt: "2026-11-13", rates: rates, longContext: [:])
-                    response = usage.scan(now: now, budget: request["budget"] as? Double ?? 1.2, prices: prices)
+                    let scope: CodexTokenUsage.Scope = request["scope"] as? String == "menu" ? .menu : .full
+                    response = usage.scan(now: now, budget: request["budget"] as? Double ?? 1.2, prices: prices, scope: scope)
                 case "usageDay":
                     response = usage.dayDetails(request["day"] as? String ?? "")
                 case "usageDetails":

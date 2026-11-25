@@ -307,6 +307,7 @@ final class CodexActivity {
                 "token_total": (source.tokenTotal as Any?) ?? NSNull(),
                 "cross_edits": source.crossEdits(projects: projects, origin: origin)
             ]
+            row["turn_key"] = source.turnKey
             row.merge(activityChatTitleFields(names[id] ?? [:], id: id, language: language)) { _, title in title }
             if knownSidebarIDs.contains(id) { row["section_id"] = (sidebarMemberships[id] as Any?) ?? NSNull() }
             threads.append((last, id, row))

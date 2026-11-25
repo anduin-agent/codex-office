@@ -156,6 +156,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var windowItem: NSMenuItem!
     private var pollTask: Task<Void, Never>?
     private var usagePollTask: Task<Void, Never>?
+    private var usageVisibilityTask: Task<Void, Never>?
+    private var usageRefreshID = 0
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
     private var settingsTask: Task<Void, Never>?
@@ -188,8 +190,10 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     private var nextLiveQuotaRead: TimeInterval = 0
     #if OFFICE_UI_TEST
     var offscreenQuotaExecutable: URL?
+    var offscreenUsageScope: CodexTokenUsage.Scope = .full
     #endif
     private var usageLoaded = false
+    private var usageIncludesDetails = false
     private var showingUsage = false
     private var officeFloorCount = 0
     private var officePreferredSize: NSSize?
@@ -274,6 +278,7 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
     func applicationWillTerminate(_ notification: Notification) {
         pollTask?.cancel()
         usagePollTask?.cancel()
+        usageVisibilityTask?.cancel()
         liveQuotaTask?.cancel()
         usageDayTask?.cancel()
         usageDetailWindow?.stop()
@@ -632,6 +637,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
             in: .page,
             completionHandler: nil
         )
+        usageVisibilityTask?.cancel()
+        usageVisibilityTask = windowVisible ? Task { [weak self] in await self?.refreshUsage() } : nil
     }
 
     private func refreshActivity() async {
@@ -646,16 +653,24 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
 
     private func refreshUsage() async {
         requestLiveQuotaIfNeeded()
+        #if OFFICE_UI_TEST
+        let scope = offscreenUsageScope
+        #else
+        let scope: CodexTokenUsage.Scope = windowVisible ? .full : .menu
+        #endif
+        usageRefreshID += 1
+        let refreshID = usageRefreshID
         let account = quotaLogAccount
-        let result = (try? await usageCollector.snapshot(refreshPrices: windowVisible, quotaAccount: account))
+        let result = (try? await usageCollector.snapshot(refreshPrices: windowVisible, quotaAccount: account, scope: scope))
             .flatMap(TokenUsageSnapshot.init(data:))
-        guard !Task.isCancelled, account == quotaLogAccount else { return }
+        guard !Task.isCancelled, refreshID == usageRefreshID, account == quotaLogAccount else { return }
         usage = result
         usageQuotaAccount = account
         usageLoaded = true
+        usageIncludesDetails = scope == .full
         tokenMeter?.update(rate: result?.tokensPerMinute)
         refreshMenu()
-        pushUsage()
+        if usageIncludesDetails { pushUsage() }
     }
 
     private var quotaLogAccount: String? {
@@ -668,6 +683,8 @@ final class OfficeApplication: NSObject, NSApplicationDelegate, NSWindowDelegate
         guard windowVisible else { return }
         #endif
         var payload = usage.map { usagePayload($0.payload) }
+        // The scene keeps its previous chart while a visible refresh fills in the details.
+        if !usageIncludesDetails { payload?["history_status"] = "loading" }
         if var recent = payload?["recent"] as? [[String: Any]], !recent.isEmpty,
            let threads = snapshot?.payload["threads"] as? [[String: Any]] {
             let ids = Set(recent.compactMap { $0["id"] as? String })
@@ -1376,6 +1393,10 @@ extension OfficeApplication {
 
     func refreshOffscreenUsage() async {
         await refreshUsage()
+    }
+
+    func pushOffscreenUsage() {
+        pushUsage()
     }
 
     func refreshOffscreenActivity() async {

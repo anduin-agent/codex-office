@@ -48,7 +48,7 @@ API 费用按 [OpenAI 标准 API 价格](https://developers.openai.com/api/docs/
 
 Codex Office 在本机读取会话日志、压缩归档和 Codex 桌面数据库。设置保存在 `~/Library/Application Support/Codex Office/office.json`，手动协作记录和回执保存在 App 的 macOS 偏好中。
 
-在「办公室设置 → 机器人皮肤」可以多选本机图片或导入文件夹。机器人出现时从皮肤组随机选一张，在它留在场景期间保持同一张。皮肤显示在桌子前方。设有动画的 GIF 会按原文件播放。开启系统「减少动态效果」时显示首帧。皮肤组最多支持 256 张，导入会替换当前组。图片副本保存在本机的 `~/Library/Application Support/Codex Office/robot-skins.plist`，点击「恢复默认」会删除副本。超出动画限制的 GIF 和其他动图保留首帧。GIF 动画上限为 180 KiB、512×512、120 帧，所有帧合计最多 800 万像素。
+在「办公室设置 → 机器人皮肤」可以多选本机图片或导入文件夹。主对话和子 Agent 各自在新一轮开始时随机抽取皮肤，同一轮内沿用同一张。皮肤组有两张以上图片时，新一轮会避开上一轮的皮肤。皮肤显示在桌子前方。设有动画的 GIF 会按原文件播放。开启系统「减少动态效果」时显示首帧。皮肤组最多支持 256 张，导入会替换当前组。图片副本保存在本机的 `~/Library/Application Support/Codex Office/robot-skins.plist`，点击「恢复默认」会删除副本。超出动画限制的 GIF 和其他动图保留首帧。GIF 动画上限为 180 KiB、512×512、120 帧，所有帧合计最多 800 万像素。
 
 使用自定义皮肤时，可以关闭「显示工位桌子」。子 Agent 的皮肤、工作状态与数据流连线依然可见，连线会接到角色身边。
 
@@ -65,7 +65,7 @@ open "build/Codex Office.app"
 
 要为指定芯片构建，运行 `make mac-office OFFICE_ARCH=arm64`（Apple 芯片）或 `make mac-office OFFICE_ARCH=x86_64`（Intel）。每次构建都输出到 `build/Codex Office.app`。
 
-发布构建用 `OFFICE_RELEASE_REPO=owner/repo` 指定 GitHub 仓库，并使用 `v0.3.0` 这样的标签发布正式版本，即可启用「检查更新」。
+发布构建用 `OFFICE_RELEASE_REPO=owner/repo` 指定 GitHub 仓库，并使用 `v0.3.1` 这样的标签发布正式版本，即可启用「检查更新」。
 
 采集器优先使用 `CODEX_HOME`，默认读取 `~/.codex`。也可以在启动时指定其他 Codex 目录。
 

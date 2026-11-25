@@ -48,7 +48,7 @@ Settings save as you change them. Choose Simplified Chinese, English, or the sys
 
 Codex Office reads session logs, compressed archives, and the Codex desktop database locally. Its settings are stored in `~/Library/Application Support/Codex Office/office.json`. Manually recorded collaboration and acknowledgments stay in the app's macOS preferences.
 
-In **Office Settings → Robot skin**, select local images or import a folder. Each robot draws an image when it appears and keeps it while it stays in the scene. Skins appear in front of the desks. Animated GIFs play as imported, and the system Reduce Motion setting shows their first frame. Importing replaces the current set, which can hold up to 256 images. Copies stay on this Mac in `~/Library/Application Support/Codex Office/robot-skins.plist`. **Restore Default** removes them. GIF playback is limited to 180 KiB, 512×512 pixels, 120 frames, and 8 million pixels across all frames. Larger GIFs and other animated formats use their first frame.
+In **Office Settings → Robot skin**, select local images or import a folder. Each chat and subagent draws a skin when a turn starts and keeps it during the turn. With two or more images, the next turn draws a different skin. Skins appear in front of the desks. Animated GIFs play as imported, and the system Reduce Motion setting shows their first frame. Importing replaces the current set, which can hold up to 256 images. Copies stay on this Mac in `~/Library/Application Support/Codex Office/robot-skins.plist`. **Restore Default** removes them. GIF playback is limited to 180 KiB, 512×512 pixels, 120 frames, and 8 million pixels across all frames. Larger GIFs and other animated formats use their first frame.
 
 With a custom skin set active, turn off **Show desks** to hide workstation furniture. Subagents keep their skins, statuses, and animated data links. The links connect beside the characters when desks are hidden.
 
@@ -65,7 +65,7 @@ open "build/Codex Office.app"
 
 To build for a specific chip, pass `OFFICE_ARCH=arm64` (Apple silicon) or `OFFICE_ARCH=x86_64` (Intel) to `make mac-office`. Each build writes to `build/Codex Office.app`.
 
-To enable **Check for Updates** in a release build, set `OFFICE_RELEASE_REPO=owner/repo` and publish a stable GitHub release with a version tag such as `v0.3.0`.
+To enable **Check for Updates** in a release build, set `OFFICE_RELEASE_REPO=owner/repo` and publish a stable GitHub release with a version tag such as `v0.3.1`.
 
 The collector uses `CODEX_HOME` when it is set and otherwise reads `~/.codex`. You can also point an instance at another Codex directory.
 

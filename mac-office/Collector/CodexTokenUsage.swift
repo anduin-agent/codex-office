@@ -6,6 +6,11 @@ import OfficeZstd
 
 /// Caches token counters, model identifiers and allowance data in the background usage actor.
 final class CodexTokenUsage {
+    enum Scope: Sendable {
+        case menu
+        case full
+    }
+
     private static let liveWindow: TimeInterval = 60
     private static let liveFileMargin: TimeInterval = 60
     private static let historyDays = 30
@@ -15,6 +20,7 @@ final class CodexTokenUsage {
     private var failures: [URL: Failure] = [:]
     private var sessions: [String: UsageSummary] = [:]
     private var rolloutThreads: [String: UsageFile] = [:]
+    private var quotaFiles: [UsageFile] = []
     private var summaryTimeZone: TimeZone?
     private var historyDates: [String: Date] = [:]
     private var latestPrices = OfficePrices.empty
@@ -26,53 +32,17 @@ final class CodexTokenUsage {
     }
 
     func scan(now: Date = Date(), budget: TimeInterval = 1.2, prices: OfficePrices = .empty,
-              quotaAccount: String? = nil) -> OfficeJSON {
+              quotaAccount: String? = nil, scope: Scope = .full) -> OfficeJSON {
         latestPrices = prices
         let costs = UsageCostCalculator(prices)
+        let includeDetails = scope == .full
         let start = ProcessInfo.processInfo.systemUptime
-        let deadline = start + budget
         let inventory = discoverLogs()
-        let previousFiles = Dictionary(files.values.map { ($0.signature, $0) },
-                                       uniquingKeysWith: { first, _ in first })
-        files = files.filter { inventory.logs[$0.key] != nil }
-        failures = failures.filter { inventory.logs[$0.key] != nil }
-        var pending: [UsageFileSignature] = []
-        var failed: [UsageFileSignature] = []
-        let ordered = inventory.logs.sorted { left, right in
-            if left.value.modifiedSeconds != right.value.modifiedSeconds {
-                return left.value.modifiedSeconds > right.value.modifiedSeconds
-            }
-            if left.value.modifiedNanoseconds != right.value.modifiedNanoseconds {
-                return left.value.modifiedNanoseconds > right.value.modifiedNanoseconds
-            }
-            return left.key.path < right.key.path
-        }
-        for (path, signature) in ordered {
-            let previous = files[path] ?? previousFiles[signature]
-            if let previous, previous.signature == signature {
-                files[path] = previous
-                continue
-            }
-            if let failure = failures[path], failure.signature == signature, start < failure.retryAt {
-                failed.append(signature)
-                continue
-            }
-            if ProcessInfo.processInfo.systemUptime >= deadline {
-                pending.append(signature)
-                continue
-            }
-            do {
-                files[path] = try readUsageFile(path, signature: signature, previous: previous)
-                failures.removeValue(forKey: path)
-            } catch {
-                failures[path] = Failure(signature: signature, retryAt: start + 30)
-                failed.append(signature)
-            }
-        }
+        let (changed, pending, failed) = updateFiles(inventory.logs, start: start, deadline: start + budget)
 
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
-        updateSummaries(calendar: calendar)
+        if changed || summaryTimeZone != calendar.timeZone { updateSummaries(calendar: calendar) }
         let cutoff = now.addingTimeInterval(-Self.liveWindow)
         let today = calendar.startOfDay(for: now)
         let firstChartDay = calendar.date(byAdding: .day, value: 1 - Self.historyDays, to: today) ?? today
@@ -82,6 +52,7 @@ final class CodexTokenUsage {
         var estimates: [Date: UsageEstimate] = [:]
         var historyEstimate = UsageEstimate()
         var liveEstimate = UsageEstimate()
+        var todayEstimate = UsageEstimate()
         var todayTokens = 0
         for (id, summary) in sessions {
             let count = summary.total(through: now) - summary.total(through: cutoff)
@@ -90,18 +61,21 @@ final class CodexTokenUsage {
                 recent.append(UsageRankedSession(id: id, tokens: count, estimate: estimate))
                 liveEstimate.add(estimate)
             }
-            if pending.isEmpty {
+            if let amounts = summary.priceableDays[today] {
+                todayEstimate.add(costs.estimate(amounts))
+            }
+            if includeDetails && pending.isEmpty {
                 for (day, tokens) in summary.days where day <= today {
                     history[day] = addingTokens(history[day, default: 0], tokens)
                 }
                 for (day, breakdown) in summary.breakdownDays where day >= firstChartDay && day <= today {
                     breakdowns[day, default: UsageBreakdown()].add(breakdown)
                 }
-            }
-            for (day, amounts) in summary.priceableDays where day == today || (pending.isEmpty && day < today) {
-                let estimate = costs.estimate(amounts)
-                if day >= firstChartDay { estimates[day, default: UsageEstimate()].add(estimate) }
-                historyEstimate.add(estimate)
+                for (day, amounts) in summary.priceableDays where day < today {
+                    let estimate = costs.estimate(amounts)
+                    if day >= firstChartDay { estimates[day, default: UsageEstimate()].add(estimate) }
+                    historyEstimate.add(estimate)
+                }
             }
             todayTokens = addingTokens(todayTokens, summary.days[today, default: 0])
         }
@@ -116,15 +90,21 @@ final class CodexTokenUsage {
                                    failed: inventory.hadErrors || !failed.isEmpty)
         detailStatus = historyStatus
         detailToday = today
-        historyDates.removeAll(keepingCapacity: true)
-        let historyValue: OfficeJSON? = hasCounts(historyStatus)
-            ? historyPayload(history, breakdowns: breakdowns, estimates: estimates, totalEstimate: historyEstimate,
-                             priceDate: prices.updatedAt, today: today, calendar: calendar) : nil
+        var historyValue: OfficeJSON?
+        if includeDetails {
+            historyDates.removeAll(keepingCapacity: true)
+            if hasCounts(historyStatus) {
+                estimates[today] = todayEstimate
+                historyEstimate.add(todayEstimate)
+                historyValue = historyPayload(history, breakdowns: breakdowns, estimates: estimates,
+                                              totalEstimate: historyEstimate, priceDate: prices.updatedAt,
+                                              today: today, calendar: calendar)
+            }
+        }
         let quota = quotaWindows(at: now, account: quotaAccount, pending: pending, failed: failed,
-                                 inventoryErrors: inventory.hadErrors)
+                                 inventoryErrors: inventory.hadErrors, includeCycles: includeDetails)
         var snapshot: OfficeJSON = [
             "live_status": liveStatus,
-            "history_status": historyStatus,
             "window_minutes": 1,
             "tokens_per_minute": hasCounts(liveStatus) ? recent.map(\.tokens).reduce(0, addingTokens) as Any : NSNull(),
             "today_status": todayStatus,
@@ -140,9 +120,12 @@ final class CodexTokenUsage {
                 session.estimate.write(to: &row)
                 return row
             } : [],
-            "history": historyValue as Any? ?? NSNull(),
         ]
-        if hasCounts(todayStatus) { estimates[today]?.write(to: &snapshot, prefix: "today_") }
+        if includeDetails {
+            snapshot["history_status"] = historyStatus
+            snapshot["history"] = historyValue as Any? ?? NSNull()
+        }
+        if hasCounts(todayStatus) { todayEstimate.write(to: &snapshot, prefix: "today_") }
         if hasCounts(liveStatus) { liveEstimate.write(to: &snapshot, prefix: "live_") }
         return snapshot
     }
@@ -364,10 +347,10 @@ final class CodexTokenUsage {
                 continue
             }
             for case let path as URL in entries {
-                let name = path.lastPathComponent
-                guard name.hasSuffix(".jsonl") || name.hasSuffix(".jsonl.zst") else { continue }
+                let diskPath = path.path
+                guard diskPath.hasSuffix(".jsonl") || diskPath.hasSuffix(".jsonl.zst") else { continue }
                 var info = stat()
-                guard lstat(path.path, &info) == 0 else {
+                guard lstat(diskPath, &info) == 0 else {
                     if errno != ENOENT { hadErrors = true }
                     continue
                 }
@@ -379,6 +362,57 @@ final class CodexTokenUsage {
         return (logs, foundRoot, hadErrors)
     }
 
+    private func updateFiles(_ logs: [URL: UsageFileSignature], start: TimeInterval, deadline: TimeInterval)
+        -> (changed: Bool, pending: [UsageFileSignature], failed: [UsageFileSignature]) {
+        let updates = logs.filter { files[$0.key]?.signature != $0.value }
+        // An archive move can reuse the parsed file even when its old path disappears.
+        let previousFiles = updates.keys.contains(where: { files[$0] == nil })
+            ? Dictionary(files.values.map { ($0.signature, $0) }, uniquingKeysWith: { first, _ in first }) : [:]
+        var changed = false
+        for path in files.keys where logs[path] == nil {
+            files.removeValue(forKey: path)
+            changed = true
+        }
+        for path in failures.keys where logs[path] == nil { failures.removeValue(forKey: path) }
+
+        var pending: [UsageFileSignature] = []
+        var failed: [UsageFileSignature] = []
+        let ordered = updates.sorted { left, right in
+            if left.value.modifiedSeconds != right.value.modifiedSeconds {
+                return left.value.modifiedSeconds > right.value.modifiedSeconds
+            }
+            if left.value.modifiedNanoseconds != right.value.modifiedNanoseconds {
+                return left.value.modifiedNanoseconds > right.value.modifiedNanoseconds
+            }
+            return left.key.path < right.key.path
+        }
+        for (path, signature) in ordered {
+            let previous = files[path] ?? previousFiles[signature]
+            if let previous, previous.signature == signature {
+                files[path] = previous
+                changed = true
+                continue
+            }
+            if let failure = failures[path], failure.signature == signature, start < failure.retryAt {
+                failed.append(signature)
+                continue
+            }
+            if ProcessInfo.processInfo.systemUptime >= deadline {
+                pending.append(signature)
+                continue
+            }
+            do {
+                files[path] = try readUsageFile(path, signature: signature, previous: previous)
+                failures.removeValue(forKey: path)
+                changed = true
+            } catch {
+                failures[path] = Failure(signature: signature, retryAt: start + 30)
+                failed.append(signature)
+            }
+        }
+        return (changed, pending, failed)
+    }
+
     private func updateSummaries(calendar: Calendar) {
         if summaryTimeZone != calendar.timeZone {
             sessions.removeAll()
@@ -386,7 +420,9 @@ final class CodexTokenUsage {
         }
         var groups: [String: [UsageFile]] = [:]
         rolloutThreads.removeAll(keepingCapacity: true)
-        for (_, source) in files.sorted(by: { $0.key.path < $1.key.path }) {
+        quotaFiles.removeAll(keepingCapacity: true)
+        for (_, source) in files.map({ ($0.key.path, $0.value) }).sorted(by: { $0.0 < $1.0 }) {
+            if source.quota != nil { quotaFiles.append(source) }
             if let identity = source.identity {
                 if let previous = rolloutThreads[identity] {
                     if source.hasMetadata && !previous.hasMetadata { rolloutThreads[identity] = source }
@@ -407,10 +443,10 @@ final class CodexTokenUsage {
     }
 
     private func quotaWindows(at now: Date, account: String?, pending: [UsageFileSignature], failed: [UsageFileSignature],
-                              inventoryErrors: Bool) -> (active: [OfficeJSON], closed: [OfficeJSON], plan: String?,
-                                                        account: String?, stamp: Date?) {
+                              inventoryErrors: Bool, includeCycles: Bool)
+        -> (active: [OfficeJSON], closed: [OfficeJSON], plan: String?, account: String?, stamp: Date?) {
         var newest: (report: QuotaReport, account: String?)?
-        for (_, file) in files.sorted(by: { $0.key.path < $1.key.path }) {
+        for file in quotaFiles {
             guard account == nil || account == file.account,
                   let report = file.quota, report.stamp <= now else { continue }
             if let newest, newest.report.stamp >= report.stamp { continue }
@@ -423,7 +459,7 @@ final class CodexTokenUsage {
         var durations = Set<Int>()
         for window in newest.report.windows where durations.insert(window.minutes).inserted {
             if window.resets.map({ now >= $0 }) == true {
-                if window.tracksCycle, let account = newest.account,
+                if includeCycles, window.tracksCycle, let account = newest.account,
                    let previous = previousCycle(minutes: window.minutes, through: now, account: account) {
                     let ended = closedCycle(previous, account: account, pending: pending, failed: failed,
                                             inventoryErrors: inventoryErrors)
@@ -436,7 +472,7 @@ final class CodexTokenUsage {
                 "window_minutes": window.minutes,
                 "resets_at": window.resets.map(officeISODate) as Any? ?? NSNull(),
             ]
-            guard window.tracksCycle, let resets = window.resets, let start = window.starts,
+            guard includeCycles, window.tracksCycle, let resets = window.resets, let start = window.starts,
                   start <= newest.report.stamp else {
                 active.append(payload)
                 continue
@@ -490,7 +526,7 @@ final class CodexTokenUsage {
 
     private func previousCycle(minutes: Int, through cutoff: Date, account: String) -> QuotaCycleSamples? {
         var previous: QuotaCycleSamples?
-        for (_, file) in files.sorted(by: { $0.key.path < $1.key.path }) where file.account == account && file.usesOpenAI {
+        for file in quotaFiles where file.account == account && file.usesOpenAI {
             for (key, samples) in file.quotaCycles where key.minutes == minutes && key.resets <= cutoff {
                 if let prior = previous {
                     guard prior.latest.resets <= key.resets else { continue }

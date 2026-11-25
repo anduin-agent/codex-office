@@ -22,7 +22,7 @@
     '选择图片…': 'Choose Images…',
     '导入文件夹…': 'Import Folder…',
     '恢复默认': 'Restore Default',
-    '机器人出现时随机选一张，图片只保存在本机。': 'Each robot draws an image when it appears. Images stay on this Mac.',
+    '每轮对话随机换一个角色，图片只保存在本机。': 'Each new turn draws a character at random. Images stay on this Mac.',
     '当前 {0} 张图片': 'Images in this set: {0}',
     '正在导入图片…': 'Importing images…',
     '已应用机器人皮肤组。': 'Robot skin set applied.',
